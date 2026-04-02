@@ -7,7 +7,6 @@ def get_all_tools():
     """Scans the tools folder and extracts INFO from each file."""
     tools_list = []
     tool_dir = "tools"
-    # Essential to exclude home.py to prevent an infinite loop/button to itself
     exclude = ["home.py", "job_history.py", "__init__.py"]
     
     if os.path.exists(tool_dir):
@@ -18,7 +17,6 @@ def get_all_tools():
                 module = importlib.util.module_from_spec(spec)
                 try:
                     spec.loader.exec_module(module)
-                    # Pulls the INFO dictionary from the tool file
                     info = getattr(module, "INFO", {
                         "title": file.replace(".py", "").replace("_", " ").title(),
                         "icon": "🛠️",
@@ -35,10 +33,10 @@ def render():
     now = datetime.now().strftime("%d %b %Y")
     user_name = st.session_state.get("user_id", "Admin").upper()
 
-    # ─── THE CSS: LOWERED TILES & REFINED GRID ──────────────────────────────
+    # ─── THE CSS: TAILORED SPACING ──────────────────────────────────────────
     st.markdown(f"""
     <style>
-    /* Reset the vertical block to standard spacing */
+    /* Reset top alignment */
     [data-testid="stVerticalBlock"] > div:first-child {{
         margin-top: 0px !important;
     }}
@@ -47,7 +45,7 @@ def render():
         display: flex;
         justify-content: flex-end;
         align-items: center;
-        padding: 10px 0;
+        padding: 5px 0;
         font-family: 'Inter', sans-serif;
         font-size: 0.65rem;
         color: #AAA;
@@ -61,14 +59,11 @@ def render():
         border-radius: 12px;
         margin-left: 10px;
         font-weight: 700;
-        display: flex;
-        align-items: center;
     }}
 
-    /* Hero Wrapper with breathing room below title */
     .hero-wrapper {{
         background: radial-gradient(circle at center, rgba(232, 73, 31, 0.04) 0%, transparent 70%);
-        padding: 20px 0 30px;
+        padding: 10px 0 20px;
         text-align: center;
     }}
     
@@ -83,10 +78,9 @@ def render():
     }}
     .hero-title span {{ color: #E8491F; }}
 
-    /* ─── THE 3CM DOWN FIX ─── */
-    /* Adds the requested space before the tool grid starts */
+    /* ─── THE 55PX SPACER ─── */
     .tool-grid-container {{
-        padding-top: 115px; 
+        padding-top: 55px; 
     }}
 
     .tool-card {{
@@ -100,12 +94,12 @@ def render():
         flex-direction: column;
         align-items: center;
         text-align: center;
-        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        transition: transform 0.3s ease;
     }}
     .tool-card:hover {{
         transform: translateY(-5px);
-        box-shadow: 0 12px 24px rgba(0,0,0,0.05);
         border-color: #E8491F;
+        box-shadow: 0 10px 20px rgba(232, 73, 31, 0.08);
     }}
 
     .card-icon {{ font-size: 2.2rem; margin-bottom: 8px; }}
@@ -129,7 +123,6 @@ def render():
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
         overflow: hidden;
-        margin-top: 5px;
     }}
 
     /* Button Styling */
@@ -145,12 +138,10 @@ def render():
         width: 100% !important;
         height: 34px !important;
         margin-top: 10px;
-        transition: all 0.2s ease !important;
     }}
     div.stButton > button:hover {{
         background-color: #E8491F !important;
         color: white !important;
-        box-shadow: 0 4px 12px rgba(232, 73, 31, 0.2) !important;
     }}
     </style>
 
@@ -163,7 +154,7 @@ def render():
     </div>
     """, unsafe_allow_html=True)
 
-    # Wrap the grid in the container that adds the 3cm padding
+    # Apply the 55px spacer
     st.markdown('<div class="tool-grid-container">', unsafe_allow_html=True)
 
     # ─── 4-COLUMN DENSE GRID ────────────────────────────────────────────────
@@ -173,7 +164,6 @@ def render():
         for idx, tool in enumerate(tools):
             col_idx = idx % 4
             with cols[col_idx]:
-                # Visual Card
                 st.markdown(f"""
                 <div class="tool-card">
                     <div class="card-icon">{tool['icon']}</div>
@@ -182,13 +172,12 @@ def render():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # NAVIGATION BUTTON
                 if st.button(f"OPEN {tool['title']}", key=f"btn_{idx}", use_container_width=True):
                     st.switch_page(f"tools/{tool['filename']}")
     else:
         st.warning("No tool modules found.")
     
-    st.markdown('</div>', unsafe_allow_html=True) # Close tool-grid-container
+    st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     render()
