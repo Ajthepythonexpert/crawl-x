@@ -4,9 +4,12 @@ import importlib.util
 from datetime import datetime
 
 def get_all_tools():
+    """Scans the tools folder and extracts INFO from each file."""
     tools_list = []
     tool_dir = "tools"
+    # Essential to exclude home.py to prevent an infinite loop/button to itself
     exclude = ["home.py", "job_history.py", "__init__.py"]
+    
     if os.path.exists(tool_dir):
         for file in sorted(os.listdir(tool_dir)):
             if file.endswith(".py") and file not in exclude:
@@ -15,6 +18,7 @@ def get_all_tools():
                 module = importlib.util.module_from_spec(spec)
                 try:
                     spec.loader.exec_module(module)
+                    # Pulls the INFO dictionary from the tool file
                     info = getattr(module, "INFO", {
                         "title": file.replace(".py", "").replace("_", " ").title(),
                         "icon": "🛠️",
@@ -22,25 +26,29 @@ def get_all_tools():
                     })
                     info["filename"] = file
                     tools_list.append(info)
-                except: continue
+                except:
+                    continue
     return tools_list
 
 def render():
+    # --- DATA PREP ---
     now = datetime.now().strftime("%d %b %Y")
     user_name = st.session_state.get("user_id", "Admin").upper()
 
-    # ─── THE CSS ────────────────────────────────────────────────────────────
+    # ─── THE CSS: HIGH DENSITY & NAVIGATION FIX ──────────────────────────────
     st.markdown(f"""
     <style>
-    /* 1. Adjusted Spacing: Tiles a little lower */
+    /* Pull the content up to hide whitespace */
     [data-testid="stVerticalBlock"] > div:first-child {{
-        margin-top: 0px !important; 
+        margin-top: -55px !important;
     }}
 
     .top-header-bar {{
         display: flex;
         justify-content: flex-end;
-        padding: 5px 0;
+        align-items: center;
+        padding: 0;
+        margin-bottom: -15px;
         font-family: 'Inter', sans-serif;
         font-size: 0.65rem;
         color: #AAA;
@@ -57,81 +65,76 @@ def render():
     }}
 
     .hero-wrapper {{
-        padding: 10px 0 30px;
+        background: radial-gradient(circle at center, rgba(232, 73, 31, 0.04) 0%, transparent 70%);
+        padding: 0px 0 10px;
         text-align: center;
     }}
     
     .hero-title {{
         font-family: 'Syne', sans-serif;
         font-weight: 800;
-        font-size: 2.8rem;
+        font-size: 2.5rem;
         color: #1A1A1A;
         letter-spacing: -0.04em;
         margin: 0;
+        line-height: 1;
     }}
     .hero-title span {{ color: #E8491F; }}
 
-    /* 2. Fixed Clickable Card Container */
-    .tool-container {{
-        position: relative;
-        height: 220px;
-        margin-bottom: 20px;
-    }}
-
     .tool-card {{
         background: #FFFFFF;
-        padding: 30px 20px;
-        border-radius: 20px;
+        padding: 18px 15px 12px;
+        border-radius: 16px;
         border: 1px solid rgba(0,0,0,0.06);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.02);
-        height: 100%;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.01);
+        height: 170px;
         display: flex;
         flex-direction: column;
         align-items: center;
         text-align: center;
-        transition: all 0.3s ease;
-        pointer-events: none; /* Let clicks pass through to the button below */
+        transition: transform 0.2s ease;
     }}
 
-    /* 3. The Invisible Master Button */
-    div.stButton {{
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        z-index: 10;
-    }}
-    
-    div.stButton > button {{
-        width: 100% !important;
-        height: 220px !important;
-        background: transparent !important;
-        border: none !important;
-        color: transparent !important;
-        cursor: pointer !important;
-    }}
-
-    /* Hover effect triggered by container focus */
-    .tool-container:hover .tool-card {{
-        transform: translateY(-5px);
-        border-color: #E8491F;
-        box-shadow: 0 10px 30px rgba(232, 73, 31, 0.1);
-    }}
-
-    .card-icon {{ font-size: 2.5rem; margin-bottom: 10px; }}
+    .card-icon {{ font-size: 2rem; margin-bottom: 5px; }}
     .card-title {{
         font-family: 'Syne', sans-serif;
         font-weight: 700;
-        font-size: 0.9rem;
+        font-size: 0.8rem;
         text-transform: uppercase;
         color: #1A1A1A;
-        margin-bottom: 8px;
+        line-height: 1.1;
+        height: 2.2rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }}
     .card-desc {{ 
-        font-size: 0.75rem; 
-        color: #888; 
-        line-height: 1.4;
+        font-size: 0.7rem; 
+        color: #777; 
+        line-height: 1.2;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        margin-top: 4px;
+    }}
+
+    /* Button Styling */
+    div.stButton > button {{
+        background-color: transparent !important;
+        color: #E8491F !important;
+        border: 1.2px solid #E8491F !important;
+        border-radius: 8px !important;
+        font-size: 9px !important;
+        font-weight: 800 !important;
+        text-transform: uppercase !important;
+        padding: 4px 10px !important;
+        width: 100% !important;
+        height: 30px !important;
+    }}
+    div.stButton > button:hover {{
+        background-color: #E8491F !important;
+        color: white !important;
     }}
     </style>
 
@@ -144,17 +147,14 @@ def render():
     </div>
     """, unsafe_allow_html=True)
 
-    # ─── 4-COLUMN INTERACTIVE GRID ──────────────────────────────────────────
+    # ─── 4-COLUMN DENSE GRID ────────────────────────────────────────────────
     tools = get_all_tools()
     if tools:
         cols = st.columns(4)
         for idx, tool in enumerate(tools):
             col_idx = idx % 4
             with cols[col_idx]:
-                # Wrap everything in a relative container
-                st.markdown(f'<div class="tool-container">', unsafe_allow_html=True)
-                
-                # Visuals
+                # Visual Card
                 st.markdown(f"""
                 <div class="tool-card">
                     <div class="card-icon">{tool['icon']}</div>
@@ -163,13 +163,12 @@ def render():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # The Master Button (Covers the whole div)
-                if st.button("", key=f"target_{idx}"):
+                # NAVIGATION BUTTON: This MUST match the path in app.py
+                if st.button(f"OPEN {tool['title']}", key=f"btn_{idx}", use_container_width=True):
+                    # Using switch_page with the relative path from the app root
                     st.switch_page(f"tools/{tool['filename']}")
-                
-                st.markdown('</div>', unsafe_allow_html=True)
     else:
-        st.warning("No tools detected.")
+        st.warning("No tool modules found.")
 
 if __name__ == "__main__":
     render()
