@@ -4,9 +4,12 @@ import importlib.util
 from datetime import datetime
 
 def get_all_tools():
+    """Scans the tools folder and extracts INFO from each file."""
     tools_list = []
     tool_dir = "tools"
+    # Essential to exclude home.py to prevent an infinite loop/button to itself
     exclude = ["home.py", "job_history.py", "__init__.py"]
+    
     if os.path.exists(tool_dir):
         for file in sorted(os.listdir(tool_dir)):
             if file.endswith(".py") and file not in exclude:
@@ -15,6 +18,7 @@ def get_all_tools():
                 module = importlib.util.module_from_spec(spec)
                 try:
                     spec.loader.exec_module(module)
+                    # Pulls the INFO dictionary from the tool file
                     info = getattr(module, "INFO", {
                         "title": file.replace(".py", "").replace("_", " ").title(),
                         "icon": "🛠️",
@@ -22,27 +26,35 @@ def get_all_tools():
                     })
                     info["filename"] = file
                     tools_list.append(info)
-                except: continue
+                except:
+                    continue
     return tools_list
 
 def render():
+    # --- DATA PREP ---
     now = datetime.now().strftime("%d %b %Y")
     user_name = st.session_state.get("user_id", "Admin").upper()
 
-    # ─── HIGH-DENSITY SaaS CSS ──────────────────────────────────────────────
+    # ─── THE CSS: HIGH DENSITY & NAVIGATION FIX ──────────────────────────────
     st.markdown(f"""
     <style>
-    /* 1. Header & Hero (Tighter Spacing) */
+    /* Pull the content up to hide whitespace */
+    [data-testid="stVerticalBlock"] > div:first-child {{
+        margin-top: -55px !important;
+    }}
+
     .top-header-bar {{
         display: flex;
         justify-content: flex-end;
         align-items: center;
-        padding: 0 0 10px 0;
+        padding: 0;
+        margin-bottom: -15px;
         font-family: 'Inter', sans-serif;
         font-size: 0.65rem;
         color: #AAA;
         letter-spacing: 0.1em;
     }}
+    
     .status-pill {{
         background: rgba(40, 167, 69, 0.1);
         color: #28a745;
@@ -51,81 +63,74 @@ def render():
         margin-left: 10px;
         font-weight: 700;
     }}
+
     .hero-wrapper {{
         background: radial-gradient(circle at center, rgba(232, 73, 31, 0.04) 0%, transparent 70%);
-        padding: 10px 0 25px; /* Significantly reduced */
+        padding: 0px 0 10px;
         text-align: center;
     }}
+    
     .hero-title {{
         font-family: 'Syne', sans-serif;
         font-weight: 800;
-        font-size: 2.8rem; /* Scaled down slightly */
+        font-size: 2.5rem;
         color: #1A1A1A;
         letter-spacing: -0.04em;
         margin: 0;
+        line-height: 1;
     }}
     .hero-title span {{ color: #E8491F; }}
 
-    /* 2. Compact Grid Cards */
     .tool-card {{
         background: #FFFFFF;
-        padding: 20px 15px 15px; /* Tighter padding */
+        padding: 18px 15px 12px;
         border-radius: 16px;
         border: 1px solid rgba(0,0,0,0.06);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.02);
-        transition: all 0.3s ease;
-        height: 180px; /* Locked height for density */
+        box-shadow: 0 2px 8px rgba(0,0,0,0.01);
+        height: 170px;
         display: flex;
         flex-direction: column;
-        justify-content: flex-start;
         align-items: center;
         text-align: center;
-        margin-bottom: 10px;
+        transition: transform 0.2s ease;
     }}
-    .tool-card:hover {{
-        transform: translateY(-4px);
-        box-shadow: 0 12px 24px rgba(232, 73, 31, 0.08);
-        border-color: rgba(232, 73, 31, 0.3);
-    }}
-    
-    .card-icon {{ font-size: 2.2rem; margin-bottom: 8px; }}
+
+    .card-icon {{ font-size: 2rem; margin-bottom: 5px; }}
     .card-title {{
         font-family: 'Syne', sans-serif;
         font-weight: 700;
-        font-size: 0.85rem;
+        font-size: 0.8rem;
         text-transform: uppercase;
-        letter-spacing: 0.05em;
         color: #1A1A1A;
-        line-height: 1.2;
-        height: 2rem; /* Keep titles uniform */
+        line-height: 1.1;
+        height: 2.2rem;
         display: flex;
         align-items: center;
+        justify-content: center;
     }}
     .card-desc {{ 
-        font-size: 0.72rem; 
+        font-size: 0.7rem; 
         color: #777; 
-        line-height: 1.3; 
-        margin-top: 5px;
+        line-height: 1.2;
         display: -webkit-box;
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
         overflow: hidden;
+        margin-top: 4px;
     }}
 
-    /* 3. Sleek Action Buttons */
+    /* Button Styling */
     div.stButton > button {{
         background-color: transparent !important;
         color: #E8491F !important;
         border: 1.2px solid #E8491F !important;
         border-radius: 8px !important;
         font-size: 9px !important;
-        font-weight: 700 !important;
+        font-weight: 800 !important;
         text-transform: uppercase !important;
-        letter-spacing: 0.05em !important;
-        padding: 5px 10px !important;
-        height: 28px !important;
-        margin-top: 10px;
+        padding: 4px 10px !important;
         width: 100% !important;
+        height: 30px !important;
     }}
     div.stButton > button:hover {{
         background-color: #E8491F !important;
@@ -149,6 +154,7 @@ def render():
         for idx, tool in enumerate(tools):
             col_idx = idx % 4
             with cols[col_idx]:
+                # Visual Card
                 st.markdown(f"""
                 <div class="tool-card">
                     <div class="card-icon">{tool['icon']}</div>
@@ -157,17 +163,12 @@ def render():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                if st.button(f"Launch {idx}", key=f"btn_{idx}", use_container_width=True):
-                    try: st.switch_page(f"tools/{tool['filename']}")
-                    except: st.info(f"Navigating...")
+                # NAVIGATION BUTTON: This MUST match the path in app.py
+                if st.button(f"OPEN {tool['title']}", key=f"btn_{idx}", use_container_width=True):
+                    # Using switch_page with the relative path from the app root
+                    st.switch_page(f"tools/{tool['filename']}")
     else:
-        st.warning("No tools found.")
-
-    st.markdown("""
-    <div style="text-align:center; margin-top:3rem; padding:1.5rem 0; border-top:1px solid #EEE; color:#E8491F; font-weight:700; font-size:0.65rem; text-transform:uppercase; letter-spacing:0.1em;">
-        Powered by CRAWL-X Engine | GBSMA2
-    </div>
-    """, unsafe_allow_html=True)
+        st.warning("No tool modules found.")
 
 if __name__ == "__main__":
     render()
