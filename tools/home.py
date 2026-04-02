@@ -33,23 +33,32 @@ def render():
     now = datetime.now().strftime("%d %b %Y")
     user_name = st.session_state.get("user_id", "Admin").upper()
 
-    # ─── THE CSS: PERFECTLY BALANCED 55PX SPACING ──────────────────────────
+    # ─── THE CSS: ZERO TOP MARGIN & SYMMETRICAL HERO ──────────────────────
     st.markdown(f"""
     <style>
-    /* Reset top alignment */
-    [data-testid="stVerticalBlock"] > div:first-child {{
+    /* 1. CRITICAL: Kill Streamlit's default top padding for the whole app */
+    .block-container {{
+        padding-top: 0rem !important;
+        padding-bottom: 0rem !important;
         margin-top: 0px !important;
+    }}
+    
+    /* 2. Hide the header anchor to save more space */
+    [data-testid="stHeader"] {{
+        background: rgba(0,0,0,0);
+        color: rgba(0,0,0,0);
     }}
 
     .top-header-bar {{
         display: flex;
         justify-content: flex-end;
         align-items: center;
-        padding: 5px 0;
+        padding: 5px 0; /* Minimal padding for the Admin text */
         font-family: 'Inter', sans-serif;
         font-size: 0.65rem;
         color: #AAA;
         letter-spacing: 0.1em;
+        margin-top: 0px;
     }}
     
     .status-pill {{
@@ -61,10 +70,10 @@ def render():
         font-weight: 700;
     }}
 
-    /* ─── HALF & HALF BALANCING ─── */
+    /* 3. Balanced Hero Section */
     .hero-wrapper {{
         background: radial-gradient(circle at center, rgba(232, 73, 31, 0.04) 0%, transparent 70%);
-        padding: 55px 0 55px; /* Equal 55px top and bottom */
+        padding: 27px 0 27px; /* 55px total / 2 = 27.5px symmetry */
         text-align: center;
     }}
     
@@ -78,11 +87,6 @@ def render():
         line-height: 1.1;
     }}
     .hero-title span {{ color: #E8491F; }}
-
-    /* Remove extra grid container padding since hero handles bottom gap */
-    .tool-grid-container {{
-        padding-top: 0px; 
-    }}
 
     .tool-card {{
         background: #FFFFFF;
@@ -126,7 +130,6 @@ def render():
         overflow: hidden;
     }}
 
-    /* Button Styling */
     div.stButton > button {{
         background-color: transparent !important;
         color: #E8491F !important;
