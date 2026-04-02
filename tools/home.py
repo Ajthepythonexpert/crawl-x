@@ -33,7 +33,7 @@ def render():
     now = datetime.now().strftime("%d %b %Y")
     user_name = st.session_state.get("user_id", "Admin").upper()
 
-    # ─── THE CSS: TAILORED SPACING ──────────────────────────────────────────
+    # ─── THE CSS: PERFECTLY BALANCED 55PX SPACING ──────────────────────────
     st.markdown(f"""
     <style>
     /* Reset top alignment */
@@ -61,9 +61,10 @@ def render():
         font-weight: 700;
     }}
 
+    /* ─── HALF & HALF BALANCING ─── */
     .hero-wrapper {{
         background: radial-gradient(circle at center, rgba(232, 73, 31, 0.04) 0%, transparent 70%);
-        padding: 10px 0 20px;
+        padding: 55px 0 55px; /* Equal 55px top and bottom */
         text-align: center;
     }}
     
@@ -78,9 +79,9 @@ def render():
     }}
     .hero-title span {{ color: #E8491F; }}
 
-    /* ─── THE 55PX SPACER ─── */
+    /* Remove extra grid container padding since hero handles bottom gap */
     .tool-grid-container {{
-        padding-top: 55px; 
+        padding-top: 0px; 
     }}
 
     .tool-card {{
@@ -154,9 +155,6 @@ def render():
     </div>
     """, unsafe_allow_html=True)
 
-    # Apply the 55px spacer
-    st.markdown('<div class="tool-grid-container">', unsafe_allow_html=True)
-
     # ─── 4-COLUMN DENSE GRID ────────────────────────────────────────────────
     tools = get_all_tools()
     if tools:
@@ -176,8 +174,6 @@ def render():
                     st.switch_page(f"tools/{tool['filename']}")
     else:
         st.warning("No tool modules found.")
-    
-    st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     render()
