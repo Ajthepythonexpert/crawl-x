@@ -1,0 +1,8 @@
+streamlit
+pandas
+beautifulsoup4
+lxml
+requests
+google-generativeai
+python-dotenv
+urllib3
