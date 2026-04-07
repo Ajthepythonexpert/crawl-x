@@ -173,7 +173,7 @@ def render():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                if st.button(f"OPEN {tool['title']}", key=f"btn_{idx}", use_container_width=True):
+                if st.button(f" {tool['title']}", key=f"btn_{idx}", use_container_width=True):
                     st.switch_page(f"tools/{tool['filename']}")
     else:
         st.warning("No tool modules found.")
