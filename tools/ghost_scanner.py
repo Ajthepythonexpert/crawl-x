@@ -4,103 +4,173 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import time
-import os
-from datetime import datetime
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import urllib3
 
-# Meta for the Home Page Grid
-INFO = {
-    "title": "Ghost Image Scanner",
-    "icon": "👻",
-    "description": "Identify broken images, syntax errors, and placeholders across BSH category pages."
-}
-
-# Disable SSL warnings for enterprise environments
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-def check_image_health(session, full_url):
+# --- SESSION ---
+def create_session():
+    s = requests.Session()
+    s.headers.update({"User-Agent": "CRAWL-X-Ghost-Scanner"})
+    s.verify = False
+    return s
+
+SESSION = create_session()
+
+# --- FETCH ALL URLS FROM SITEMAP ---
+def fetch_sitemap_urls(sitemap_url):
+    urls = set()
     try:
-        r = session.head(full_url, timeout=10)
+        r = SESSION.get(sitemap_url, timeout=15)
+        locs = re.findall(r'<loc>(.*?)</loc>', r.text)
+
+        for loc in locs:
+            loc = loc.strip()
+            if loc.endswith(".xml"):
+                urls.update(fetch_sitemap_urls(loc))  # recursive
+            else:
+                urls.add(loc)
+    except:
+        pass
+    return list(urls)
+
+# --- IMAGE HEALTH ---
+def check_image_health(full_url):
+    try:
+        r = SESSION.head(full_url, timeout=5)
+
         if r.status_code in [403, 405]:
-            r = session.get(full_url, timeout=10, stream=True)
+            r = SESSION.get(full_url, timeout=5, stream=True)
             r.close()
-        if r.status_code == 404: return (True, "404 NOT FOUND")
-        elif r.status_code >= 400: return (True, f"STATUS {r.status_code}")
+
+        if r.status_code == 404:
+            return True, "404 NOT FOUND"
+        elif r.status_code >= 400:
+            return True, f"STATUS {r.status_code}"
+
         cl = r.headers.get("content-length")
-        if cl and int(cl) == 0: return (True, "EMPTY FILE")
-        return (False, "OK")
-    except: return (False, "TIMEOUT/ERROR")
+        if cl and int(cl) == 0:
+            return True, "EMPTY FILE"
 
-def audit_page(session, page_url, placeholders):
+        return False, "OK"
+
+    except:
+        return True, "TIMEOUT/ERROR"
+
+# --- PAGE AUDIT ---
+def audit_page(page_url, placeholders):
     issues = []
-    checked_urls = set()
-    try:
-        r = session.get(page_url, timeout=20)
-        soup = BeautifulSoup(r.text, "lxml")
-        
-        # 1. Syntax Check
-        if "/.webp" in r.text or "/.jpg" in r.text:
-            issues.append({"source_page": page_url, "type": "SYNTAX ERROR", "asset": "Missing Filename"})
+    checked_images = set()
 
-        # 2. Placeholder Check
+    try:
+        r = SESSION.get(page_url, timeout=10)
+        soup = BeautifulSoup(r.text, "lxml")
+
+        # Syntax check
+        if "/.webp" in r.text or "/.jpg" in r.text:
+            issues.append({
+                "source_page": page_url,
+                "type": "SYNTAX ERROR",
+                "asset": "Missing Filename"
+            })
+
+        # Placeholder check
         for kw in placeholders:
             if kw in r.text.lower():
-                issues.append({"source_page": page_url, "type": "PLACEHOLDER", "asset": kw})
+                issues.append({
+                    "source_page": page_url,
+                    "type": "PLACEHOLDER",
+                    "asset": kw
+                })
 
-        # 3. Image Health
-        img_tags = soup.find_all("img")
-        for img in img_tags:
+        # Image check
+        for img in soup.find_all("img"):
             src = img.get("src") or img.get("data-src")
-            if src and len(src) > 5:
+
+            if src:
                 full_url = urljoin(page_url, src)
-                if full_url not in checked_urls:
-                    checked_urls.add(full_url)
-                    is_broken, reason = check_image_health(session, full_url)
+
+                if full_url not in checked_images:
+                    checked_images.add(full_url)
+
+                    is_broken, reason = check_image_health(full_url)
+
                     if is_broken:
-                        issues.append({"source_page": page_url, "type": "BROKEN", "asset": src, "details": reason})
-    except: pass
+                        issues.append({
+                            "source_page": page_url,
+                            "type": "BROKEN IMAGE",
+                            "asset": full_url,
+                            "details": reason
+                        })
+
+    except:
+        pass
+
     return issues
 
+# --- UI ---
 def render():
-    st.header("👻 Ghost Image Scanner")
-    st.markdown("Hunt for broken assets and 'no-image' placeholders across domains.")
+    st.set_page_config(page_title="Ghost Image Scanner", layout="wide")
 
-    with st.expander("⚙️ Scan Settings", expanded=True):
-        col1, col2 = st.columns(2)
-        target_url = col1.text_input("Target URL", placeholder="https://www.bosch-home.com/in/")
-        scan_mode = col2.selectbox("Scan Mode", ["Strict (Category Only)", "Deep (All Pages)"])
-        
-        placeholders = st.multiselect("Placeholder Keywords", 
-                                     ["no-picture-available", "nopicture", "qc-image", "image-image"],
-                                     default=["no-picture-available", "nopicture"])
+    st.title("👻 Ghost Image Scanner (Full Website)")
+    st.markdown("Scan all pages to detect broken images, placeholders, and syntax issues.")
 
-    if st.button("Start Ghost Hunt", use_container_width=True):
-        if not target_url:
-            st.error("Please provide a URL to scan.")
+    sitemap_url = st.text_input("Sitemap URL", placeholder="https://example.com/sitemap.xml")
+
+    placeholders = st.multiselect(
+        "Placeholder Keywords",
+        ["no-picture-available", "nopicture", "qc-image", "image-image"],
+        default=["no-picture-available", "nopicture"]
+    )
+
+    threads = st.slider("Speed (Threads)", 5, 30, 15)
+
+    if st.button("🚀 Start Full Scan", use_container_width=True):
+
+        if not sitemap_url:
+            st.error("Please enter sitemap URL")
             return
 
-        session = requests.Session()
-        session.headers.update({"User-Agent": "CRAWL-X-Ghost-Scanner"})
-        
-        with st.status("🔍 Scanning domain...", expanded=True) as status:
-            st.write("Fetching page content...")
-            # Simplified logic for demo: auditing the single page provided
-            # You can re-integrate your sitemap logic here for bulk runs
-            findings = audit_page(session, target_url, placeholders)
-            
-            if findings:
-                status.update(label="Ghost Scan Complete: Issues Found!", state="complete")
-                df = pd.DataFrame(findings)
-                st.error(f"Found {len(df)} ghost issues.")
-                st.dataframe(df, use_container_width=True)
-                
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button("Download Report", csv, f"ghost_report_{int(time.time())}.csv", "text/csv")
-            else:
-                status.update(label="Scan Complete: No Issues!", state="complete")
-                st.success("The page looks clean! No broken images or placeholders found.")
+        with st.status("🌐 Fetching all pages...", expanded=True):
 
+            urls = fetch_sitemap_urls(sitemap_url)
+
+            if not urls:
+                st.error("No URLs found")
+                return
+
+            st.write(f"✅ Total pages: {len(urls)}")
+
+            all_issues = []
+            progress = st.progress(0)
+
+            with ThreadPoolExecutor(max_workers=threads) as executor:
+                futures = {executor.submit(audit_page, url, placeholders): url for url in urls}
+
+                for i, f in enumerate(as_completed(futures)):
+                    result = f.result()
+                    if result:
+                        all_issues.extend(result)
+
+                    progress.progress((i + 1) / len(urls))
+
+        # --- RESULTS ---
+        if all_issues:
+            df = pd.DataFrame(all_issues)
+
+            st.error(f"❌ Found {len(df)} issues")
+            st.dataframe(df, use_container_width=True)
+
+            st.download_button(
+                "📩 Download Report",
+                df.to_csv(index=False).encode("utf-8"),
+                f"ghost_report_{int(time.time())}.csv"
+            )
+        else:
+            st.success("🎉 No ghost issues found!")
+
+# --- RUN ---
 if __name__ == "__main__":
     render()
