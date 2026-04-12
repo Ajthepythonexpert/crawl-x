@@ -1,30 +1,21 @@
 import streamlit as st
 import requests
-from bs4 import BeautifulSoup
 import pandas as pd
-from urllib.parse import urljoin
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import urllib3
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-import re
-
-# --- TOOL META ---
-INFO = {
-    "title": "404 Link Hunter",
-    "icon": "🚫",
-    "description": "Scan sitemaps to identify broken internal links (404s) that hurt user experience and SEO rankings."
-}
 
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- SESSION MANAGER (BSH TUNED) ---
+# --- SESSION SETUP ---
 def create_session():
     s = requests.Session()
-    # Retry logic handles flaky regional connections
-    retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-    adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=retries)
+    retries = Retry(total=3, backoff_factor=0.5,
+                    status_forcelist=[500, 502, 503, 504])
+    adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50, max_retries=retries)
     s.mount("https://", adapter)
     s.mount("http://", adapter)
     s.headers.update({"User-Agent": "CRAWL-X-404-Hunter"})
@@ -33,97 +24,106 @@ def create_session():
 
 SESSION = create_session()
 
-# --- HELPERS ---
-def check_url_status(url):
-    """Verifies if a URL is alive or broken"""
+# --- FETCH ALL URLS (Handles nested sitemaps) ---
+def fetch_all_sitemap_urls(sitemap_url):
+    urls = set()
     try:
-        # Use HEAD first for speed, fallback to GET if server blocks HEAD
-        r = SESSION.head(url, timeout=10, allow_redirects=True)
-        if r.status_code in [403, 405]:
-            r = SESSION.get(url, timeout=10, stream=True, allow_redirects=True)
-            r.close()
-        
-        if r.status_code == 404:
-            return True, "404 Not Found"
-        if r.status_code >= 400:
-            return True, f"Error {r.status_code}"
-        return False, "OK"
+        r = SESSION.get(sitemap_url, timeout=15)
+        locs = re.findall(r'<loc>(.*?)</loc>', r.text)
+
+        for loc in locs:
+            loc = loc.strip()
+            if loc.endswith(".xml"):
+                urls.update(fetch_all_sitemap_urls(loc))  # recursive
+            else:
+                urls.add(loc)
     except:
-        return True, "Timeout/Connection Error"
+        pass
 
-def get_broken_links_on_page(page_url):
-    findings = []
-    checked_links = set()
+    return urls
+
+# --- FAST URL CHECK ---
+def check_url_fast(url):
     try:
-        r = SESSION.get(page_url, timeout=20)
-        if r.status_code != 200: return []
-        soup = BeautifulSoup(r.text, "lxml")
-        
-        # Extract all internal/external links
-        links = [urljoin(page_url, a['href']) for a in soup.find_all("a", href=True) 
-                 if not a['href'].startswith(("#", "javascript:", "mailto:", "tel:"))]
-        
-        for link in links:
-            if link not in checked_links:
-                checked_links.add(link)
-                is_broken, reason = check_url_status(link)
-                if is_broken:
-                    findings.append({
-                        "Source Page": page_url,
-                        "Broken Link": link,
-                        "Status": reason
-                    })
-    except: pass
-    return findings
+        r = SESSION.head(url, timeout=5, allow_redirects=True)
 
-def fetch_sitemap_urls(sm_url):
-    """Extracts URLs from sitemap"""
-    try:
-        r = SESSION.get(sm_url, timeout=20)
-        found = re.findall(r'<loc>(https?://[^<]+)</loc>', r.text)
-        return list(set([u.strip() for u in found]))
-    except: return []
+        if r.status_code in [403, 405]:
+            r = SESSION.get(url, timeout=5, stream=True)
+            r.close()
 
-# --- UI RENDER ---
+        if r.status_code == 404:
+            return {"URL": url, "Status": "404 Not Found"}
+        elif r.status_code >= 400:
+            return {"URL": url, "Status": f"Error {r.status_code}"}
+
+        return None
+
+    except:
+        return {"URL": url, "Status": "Timeout/Error"}
+
+# --- STREAMLIT UI ---
 def render():
-    st.header("🚫 404 Link Hunter")
-    st.markdown("Identify dead links across your domain to improve crawl efficiency and UX.")
+    st.set_page_config(page_title="404 Link Hunter", layout="wide")
 
-    sitemap_input = st.text_input("Sitemap URL", placeholder="https://www.bosch-home.com/sitemap.xml")
-    limit = st.slider("Pages to Audit", 5, 100, 20)
+    st.title("🚫 404 Link Hunter (Full Website Scanner)")
+    st.markdown("Scan your **entire sitemap** and detect all broken URLs (404s & errors).")
 
-    if st.button("Start 404 Search", use_container_width=True):
+    sitemap_input = st.text_input(
+        "Enter Sitemap URL",
+        placeholder="https://www.example.com/sitemap.xml"
+    )
+
+    max_workers = st.slider("Speed (Threads)", 5, 50, 20)
+
+    if st.button("🚀 Start Full Site Scan", use_container_width=True):
+
         if not sitemap_input:
-            st.error("Please provide a sitemap URL.")
+            st.error("Please enter a sitemap URL")
             return
 
-        with st.status("📡 Probing for broken links...", expanded=True) as status:
-            urls = fetch_sitemap_urls(sitemap_input)[:limit]
+        with st.status("🌐 Fetching URLs from sitemap...", expanded=True):
+
+            urls = fetch_all_sitemap_urls(sitemap_input)
+
             if not urls:
-                status.update(label="No URLs found in sitemap.", state="error")
+                st.error("No URLs found in sitemap")
                 return
 
-            st.write(f"Auditing links on {len(urls)} pages...")
-            all_broken = []
-            
-            # Using ThreadPool for Phase 2 Auditing
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                futures = {executor.submit(get_broken_links_on_page, u): u for u in urls}
-                for f in as_completed(futures):
+            urls = list(urls)
+            st.write(f"✅ Total URLs found: {len(urls)}")
+
+            broken_links = []
+
+            st.write("⚡ Checking URL status (this may take time for large sites)...")
+
+            progress = st.progress(0)
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(check_url_fast, url): url for url in urls}
+
+                for i, f in enumerate(as_completed(futures)):
                     res = f.result()
-                    if res: all_broken.extend(res)
+                    if res:
+                        broken_links.append(res)
 
-            if all_broken:
-                status.update(label=f"Audit Complete: {len(all_broken)} Broken Links Found", state="complete")
-                df = pd.DataFrame(all_broken)
-                st.error("Broken Links Detected")
-                st.dataframe(df, use_container_width=True)
-                
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button("📩 Download 404 Report", csv, "broken_links_report.csv", "text/csv")
-            else:
-                status.update(label="Audit Complete: All Links OK", state="complete")
-                st.success("No broken links found in the audited sample. Excellent link health!")
+                    progress.progress((i + 1) / len(urls))
 
+        # --- RESULTS ---
+        if broken_links:
+            df = pd.DataFrame(broken_links)
+
+            st.error(f"❌ {len(df)} Broken URLs Found")
+            st.dataframe(df, use_container_width=True)
+
+            st.download_button(
+                "📩 Download Report",
+                df.to_csv(index=False).encode("utf-8"),
+                "broken_links_report.csv",
+                "text/csv"
+            )
+        else:
+            st.success("🎉 No broken URLs found. Site is healthy!")
+
+# --- RUN ---
 if __name__ == "__main__":
     render()
