@@ -3,6 +3,8 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+import re
+from collections import Counter
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import google.generativeai as genai
@@ -10,47 +12,31 @@ import google.generativeai as genai
 # Import helpers
 from core.utils import is_garbage_link, check_asset_health, get_image_details
 
-INFO = {
-    "title": "AI Audit",
-    "icon": "🧠",
-    "description": "Deep on-page analysis powered by Gemini Strategic Intelligence for BSH domains."
-}
-
 def render():
-    st.markdown("""
-    <div class="tool-header">
-        <div class="tool-icon">🧠</div>
-        <div>
-            <div class="tool-title">CRAWL-X AI Audit</div>
-            <div class="tool-sub">Deep Asset Inspection & Gemini Strategic Intelligence</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+
+    st.title("🧠 CRAWL-X AI Audit")
 
     # Sidebar
-    with st.sidebar.expander("🔑 AI Authentication", expanded=True):
-        user_api_key = st.text_input("Gemini API Key", type="password")
-        if not user_api_key:
-            st.warning("Enter API key to unlock AI Strategy.")
+    user_api_key = st.sidebar.text_input("Gemini API Key", type="password")
 
     # Inputs
     url_input = st.text_input("Target URL", value="https://www.bosch-home.com/za/en/services")
     target_kw = st.text_input("Target Keyword (Optional)")
 
     if st.button("🚀 START FULL AI AUDIT"):
+
         session = requests.Session()
         headers = {'User-Agent': 'CRAWL-X-Bot/1.0'}
         start_time = time.time()
 
         try:
-            with st.spinner("CRAWL-X is performing a Deep Audit..."):
+            with st.spinner("Running audit..."):
+
                 response = session.get(url_input, timeout=15, headers=headers)
                 latency = time.time() - start_time
 
                 soup = BeautifulSoup(response.text, 'html.parser')
                 html_content = response.text
-
-                st.divider()
 
                 tabs = st.tabs([
                     "📋 Diagnosis",
@@ -66,43 +52,30 @@ def render():
                 with tabs[0]:
                     title_str = soup.title.string.strip() if soup.title else "MISSING"
                     st.metric("Server Response", f"{latency:.2f}s")
-                    st.markdown(f"**Title Tag:** `{title_str}`")
-
-                    for h in ['h1', 'h2']:
-                        for t in soup.find_all(h):
-                            st.caption(f"**{h.upper()}**: {t.get_text().strip()}")
+                    st.write("Title:", title_str)
 
                 # ---------------------------
                 # 🧠 AI Strategy
                 # ---------------------------
                 with tabs[1]:
                     if not user_api_key:
-                        st.info("AI Analysis Locked.")
+                        st.info("Enter API key to enable AI.")
                     else:
                         genai.configure(api_key=user_api_key)
                         model = genai.GenerativeModel("gemini-3-flash-preview")
 
-                        prompt = f"""
-                        URL: {url_input}
-                        Target Keyword: {target_kw if target_kw else "Not provided"}
-
-                        Perform an SEO audit and provide:
-                        1. 3 critical issues
-                        2. 3 quick wins
-                        3. Content improvement suggestions
-                        """
+                        prompt = f"Analyze SEO for {url_input} and suggest improvements."
 
                         try:
-                            response = model.generate_content(prompt)
-                            st.info(response.text)
-                        except Exception as ai_err:
-                            st.error(f"AI Error: {ai_err}")
+                            res = model.generate_content(prompt)
+                            st.write(res.text)
+                        except Exception as e:
+                            st.error(f"AI Error: {e}")
 
                 # ---------------------------
                 # 🔗 Links
                 # ---------------------------
                 with tabs[2]:
-                    st.subheader("Broken Link Check")
 
                     links = [
                         urljoin(url_input, a.get('href', ''))
@@ -110,7 +83,6 @@ def render():
                         if a.get('href') and not is_garbage_link(a.get('href'))
                     ]
 
-                    # Remove duplicates but preserve order
                     unique_links = list(dict.fromkeys(links))[:20]
 
                     broken = []
@@ -125,50 +97,87 @@ def render():
                             try:
                                 is_err, res = f.result()
                                 if is_err:
-                                    broken.append({
-                                        "URL": futures[f],
-                                        "Error": res
-                                    })
+                                    broken.append({"URL": futures[f], "Error": res})
                             except Exception as e:
-                                broken.append({
-                                    "URL": futures[f],
-                                    "Error": str(e)
-                                })
+                                broken.append({"URL": futures[f], "Error": str(e)})
 
                     df_broken = pd.DataFrame(broken)
 
                     if df_broken.empty:
-                        st.success("No broken links in top 20.")
+                        st.success("No broken links found.")
                     else:
-                        st.dataframe(df_broken, use_container_width=True)
+                        st.dataframe(df_broken)
 
                 # ---------------------------
-                # 📊 Density (placeholder)
+                # 📊 Keyword Density (FIXED)
                 # ---------------------------
                 with tabs[3]:
-                    st.info("Keyword Density module coming soon...")
+
+                    st.subheader("📊 Keyword Density Analysis")
+
+                    # Remove unwanted tags
+                    for s in soup(["script", "style", "nav", "footer"]):
+                        s.extract()
+
+                    # Extract words
+                    words = re.findall(r'\b\w{3,}\b', soup.get_text(separator=' ').lower())
+
+                    # Stopwords
+                    stops = {
+                        'the', 'and', 'with', 'for', 'this', 'that',
+                        'your', 'from', 'bosch', 'home', 'our', 'siemens'
+                    }
+
+                    filtered_words = [w for w in words if w not in stops]
+
+                    if not filtered_words:
+                        st.warning("No meaningful text found.")
+                    else:
+                        total_words = len(filtered_words)
+
+                        freq_list = Counter(filtered_words).most_common(20)
+
+                        df_freq = pd.DataFrame(freq_list, columns=["Keyword", "Count"])
+
+                        # Add density %
+                        df_freq["Density (%)"] = df_freq["Count"].apply(
+                            lambda x: round((x / total_words) * 100, 2)
+                        )
+
+                        # Chart
+                        st.bar_chart(df_freq.set_index("Keyword"))
+
+                        # Table
+                        st.dataframe(df_freq, use_container_width=True)
+
+                        # Target keyword tracking
+                        if target_kw:
+                            kw = target_kw.lower()
+                            kw_count = filtered_words.count(kw)
+                            kw_density = round((kw_count / total_words) * 100, 2)
+
+                            st.metric("Target Keyword Density", f"{kw_density}%")
 
                 # ---------------------------
                 # 🖼️ Image & Ghost Audit
                 # ---------------------------
                 with tabs[4]:
 
-                    # IMAGE AUDIT
-                    st.subheader("🖼️ Image Asset Audit")
+                    st.subheader("Image Audit")
 
                     img_list = []
 
                     for img in soup.find_all('img'):
                         try:
                             src = urljoin(url_input, img.get('src', ''))
-                            size, res = get_image_details(src, session)
+                            size, _ = get_image_details(src, session)
 
                             img_list.append({
                                 "File": src.split('/')[-1],
                                 "Size (KB)": round(size, 2),
                                 "Status": "🚩 LARGE" if size > 1000 else "✅ OK"
                             })
-                        except Exception:
+                        except:
                             continue
 
                     df_images = pd.DataFrame(img_list)
@@ -176,11 +185,9 @@ def render():
                     if df_images.empty:
                         st.info("No images found.")
                     else:
-                        st.dataframe(df_images, use_container_width=True)
+                        st.dataframe(df_images)
 
-                    # GHOST AUDIT
-                    st.subheader("👻 Ghost Image Audit")
-
+                    # Ghost audit
                     ghosts = []
 
                     if "/.webp" in html_content or "/.jpg" in html_content:
@@ -194,7 +201,7 @@ def render():
                     if df_ghosts.empty:
                         st.success("No Ghost issues found.")
                     else:
-                        st.dataframe(df_ghosts, use_container_width=True)
+                        st.dataframe(df_ghosts)
 
         except Exception as e:
             st.error(f"Audit failed: {e}")
