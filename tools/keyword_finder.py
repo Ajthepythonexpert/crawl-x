@@ -1,17 +1,15 @@
 import streamlit as st
-import time
 import json
 import pandas as pd
 import io
 import os
-import re
+import tempfile
 from urllib.parse import urlparse
 
-from jobs.job_manager import start_job, get_job
 from core.scraper import build_keyword_script
 
 
-# 🔧 Prevent Excel crash on empty sheets
+# ✅ Prevent Excel crash
 def df_to_excel_bytes(sheets: dict) -> bytes:
     def safe_df(df):
         if isinstance(df, pd.DataFrame) and not df.empty:
@@ -26,9 +24,6 @@ def df_to_excel_bytes(sheets: dict) -> bytes:
 
 
 def render():
-    if "jobs" not in st.session_state:
-        st.session_state["jobs"] = {}
-
     st.markdown("""
     <div class="tool-header">
         <div class="tool-icon">🔍</div>
@@ -39,129 +34,103 @@ def render():
     </div>
     """, unsafe_allow_html=True)
 
-    # INPUT FORM
+    # FORM
     with st.form("kw_form"):
         sitemap_url = st.text_input("Sitemap XML URL")
         keyword = st.text_input("Keyword to search for")
         path_filter = st.text_input("Sub-folder filter (optional)")
         submitted = st.form_submit_button("🚀 Start Crawl")
 
-    # START JOB
-    if submitted and "keyword" not in st.session_state["jobs"]:
+    if submitted:
         if not sitemap_url or not keyword:
             st.error("Please fill in both the Sitemap URL and Keyword.")
             return
 
-        user_id = st.session_state.get("user_id", "admin")
+        progress_bar = st.progress(0, text="Initialising crawler…")
+        status = st.empty()
 
-        def builder(output_path):
-            return build_keyword_script(sitemap_url, keyword, path_filter, output_path)
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = os.path.join(tmp, "results.json")
 
-        job_id = start_job(user_id, "keyword", {}, builder)
-        st.session_state["jobs"]["keyword"] = job_id
-        st.rerun()
+            # ✅ RUN YOUR SCRAPER DIRECTLY (NO JOB SYSTEM)
+            progress_bar.progress(20, text="Fetching sitemap...")
+            status.info("Scanning pages...")
 
-    # POLLING
-    if "keyword" in st.session_state["jobs"]:
-        job_id = st.session_state["jobs"]["keyword"]
-        job = get_job(job_id)
+            build_keyword_script(
+                sitemap_url,
+                keyword.lower(),
+                path_filter,
+                output_path
+            )
 
-        if not job:
-            st.error("Job not found.")
-            return
+            progress_bar.progress(80, text="Processing results...")
 
-        status = job[3]
-        st.caption(f"Job ID: {job_id}")
-
-        if status in ["queued", "running"]:
-            with st.spinner(f"⏳ {status.upper()}..."):
-                time.sleep(2)
-                st.rerun()
-
-        elif status == "failed":
-            st.error(f"❌ Job failed: {job[7]}")
-            if st.button("Start New Crawl"):
-                st.session_state["jobs"].pop("keyword", None)
-                st.rerun()
-
-        elif status == "completed":
-            result_path = job[5]
-
-            if not result_path or not os.path.exists(result_path):
-                st.error("Result file missing.")
+            if not os.path.exists(output_path):
+                st.error("No output generated. Please check the sitemap.")
                 return
 
-            with open(result_path) as f:
+            with open(output_path) as f:
                 data = json.load(f)
 
-            # ✅ SAFE DATA EXTRACTION
-            results_data = data.get("results", [])
-            sitemap_data = data.get("sitemap", [])
+        # ✅ SAFE DATA HANDLING
+        results_data = data.get("results", [])
+        sitemap_data = data.get("sitemap", [])
 
-            # ✅ ALWAYS CREATE VALID DATAFRAMES
-            df_all = pd.DataFrame(results_data) if results_data else pd.DataFrame(columns=["URL", "Status", "Keyword_Found"])
-            df_official = pd.DataFrame(sitemap_data, columns=["URL"]) if sitemap_data else pd.DataFrame(columns=["URL"])
+        df_all = pd.DataFrame(results_data) if results_data else pd.DataFrame(columns=["URL", "Status", "Keyword_Found"])
+        df_official = pd.DataFrame(sitemap_data, columns=["URL"]) if sitemap_data else pd.DataFrame(columns=["URL"])
 
-            # 🔥 FIXED KEYWORD LOGIC (extra safe)
-            if not df_all.empty and "Keyword_Found" in df_all.columns:
-                keyword_hits = df_all[df_all["Keyword_Found"] == True]
+        # ✅ LOGIC FROM YOUR ORIGINAL WORKING VERSION
+        keyword_hits = df_all[df_all["Keyword_Found"] == True] if not df_all.empty else pd.DataFrame()
+
+        missing_in_xml = df_all[
+            (df_all["Status"] == 200) &
+            (~df_all["URL"].isin(df_official["URL"]))
+        ] if not df_all.empty else pd.DataFrame()
+
+        orphans = df_official[
+            ~df_official["URL"].isin(df_all["URL"])
+        ] if not df_official.empty else pd.DataFrame()
+
+        progress_bar.progress(100, text="Done!")
+        status.success("✅ Crawl complete!")
+
+        # METRICS
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Pages Scanned", len(df_all))
+        c2.metric("🚩 Keyword Hits", len(keyword_hits))
+        c3.metric("Missing from XML", len(missing_in_xml))
+        c4.metric("Orphan Pages", len(orphans))
+
+        # ✅ SAFE DISPLAY (FIXED ERROR)
+        st.markdown("### 🚩 Keyword Hits")
+        if not keyword_hits.empty:
+            st.dataframe(keyword_hits, use_container_width=True)
+        else:
+            st.info("No keyword matches found.")
+
+        with st.expander("📋 All Scanned Pages"):
+            if not df_all.empty:
+                st.dataframe(df_all, use_container_width=True)
             else:
-                keyword_hits = pd.DataFrame(columns=df_all.columns)
+                st.info("No pages scanned.")
 
-            # Missing in sitemap
-            if not df_all.empty and not df_official.empty:
-                missing_in_xml = df_all[
-                    (df_all["Status"] == 200) &
-                    (~df_all["URL"].isin(df_official["URL"]))
-                ]
-            else:
-                missing_in_xml = pd.DataFrame(columns=df_all.columns)
+        # EXPORT
+        sheets = {
+            "1. KEYWORD HITS": keyword_hits,
+            "2. Missing from Sitemap": missing_in_xml,
+            "3. Orphans (XML Only)": orphans,
+            "4. All Live Audit": df_all,
+            "5. Official Sitemap List": df_official,
+        }
 
-            # Orphans
-            if not df_official.empty and not df_all.empty:
-                orphans = df_official[~df_official["URL"].isin(df_all["URL"])]
-            else:
-                orphans = pd.DataFrame(columns=df_official.columns)
+        excel_bytes = df_to_excel_bytes(sheets)
 
-            st.success("✅ Crawl complete!")
-
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Pages Scanned", len(df_all))
-            c2.metric("🚩 Keyword Hits", len(keyword_hits))
-            c3.metric("Missing from XML", len(missing_in_xml))
-            c4.metric("Orphan Pages", len(orphans))
-
-            # ✅ SAFE DISPLAY (NO CRASH)
-            st.markdown("### 🚩 Keyword Hits")
-            if not keyword_hits.empty:
-                st.dataframe(keyword_hits, use_container_width=True)
-            else:
-                st.info("No keyword matches found.")
-
-            # EXPORT
-            sheets = {
-                "Keyword Hits": keyword_hits,
-                "Missing from Sitemap": missing_in_xml,
-                "Orphans": orphans,
-                "All Pages": df_all,
-                "Sitemap": df_official,
-            }
-
-            excel_bytes = df_to_excel_bytes(sheets)
-
-            col1, col2 = st.columns([1, 4])
-            with col1:
-                st.download_button(
-                    "⬇️ Download Report",
-                    data=excel_bytes,
-                    file_name=f"Keyword_Audit_{urlparse(sitemap_url).netloc}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-
-            with col2:
-                if st.button("Start New Crawl"):
-                    st.session_state["jobs"].pop("keyword", None)
-                    st.rerun()
+        st.download_button(
+            "⬇️ Download Full Excel Report",
+            data=excel_bytes,
+            file_name=f"Keyword_Audit_{urlparse(sitemap_url).netloc}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 
 if __name__ == "__main__":
