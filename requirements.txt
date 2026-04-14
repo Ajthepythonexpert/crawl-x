@@ -7,3 +7,5 @@ google-generativeai
 python-dotenv
 urllib3
 bcrypt
+advertools
+openpyxl
