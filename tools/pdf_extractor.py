@@ -3,9 +3,12 @@ import pandas as pd
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# ✅ IMPORT YOUR FUNCTIONS HERE
-# Example:
-# from utils.pdf_utils import get_sitemap_urls, find_pdfs_on_page, search_keyword_in_pdf
+# ✅ FIXED IMPORT
+from tools.utils.pdf_utils import (
+    get_sitemap_urls,
+    find_pdfs_on_page,
+    search_keyword_in_pdf
+)
 
 
 def run_pdf_scan(sitemap_url, keyword, max_workers=10):
@@ -45,8 +48,9 @@ def run_pdf_scan(sitemap_url, keyword, max_workers=10):
     return results, flagged
 
 
-# ✅ MUST BE main()
 def main():
+    st.write("✅ PDF TOOL LOADED")  # DEBUG
+
     st.markdown("""
     <div class='tool-header'>
         <div class='tool-title'>📄 PDF Keyword Scanner</div>
@@ -70,7 +74,11 @@ def main():
             sitemap_url = sitemap_url.rstrip("/") + "/sitemap.xml"
 
         with st.spinner("Scanning PDFs across the website..."):
-            results, flagged = run_pdf_scan(sitemap_url, keyword)
+            try:
+                results, flagged = run_pdf_scan(sitemap_url, keyword)
+            except Exception as e:
+                st.error(f"Error: {e}")
+                return
 
         df_all = pd.DataFrame(results)
         df_flagged = pd.DataFrame(flagged)
@@ -94,3 +102,7 @@ def main():
                 df_all.to_csv(index=False),
                 "all_pdfs.csv"
             )
+
+
+# 🔥 REQUIRED
+main()
