@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import core.utils
 
 # ✅ FIXED IMPORT (based on your current setup)
 from utils import *
