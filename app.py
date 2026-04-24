@@ -1,10 +1,9 @@
 import streamlit as st
 import os
-import importlib.util
 from auth.utils import create_user, verify_user
 from analytics.db import init_db, get_conn
 
-# ─── PAGE CONFIG ──────────────────────────────────────────────────────────────
+# ─── PAGE CONFIG ──────────────────────────────────────────────
 st.set_page_config(
     page_title="CRAWL-X | BSH SEO Intelligence",
     page_icon="🕶️",
@@ -12,7 +11,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ─── BSH CORPORATE GLOBAL CSS ─────────────────────────────────────────────────
+# ─── BSH CORPORATE GLOBAL CSS ─────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Space+Mono&family=Syne:wght@700;800&display=swap');
@@ -26,7 +25,6 @@ st.markdown("""
     --white: #FFFFFF;
 }
 
-/* Global App Container */
 .stApp {
     background-color: var(--bsh-bg) !important;
     color: var(--bsh-text) !important;
@@ -35,7 +33,6 @@ st.markdown("""
 
 [data-testid="stHeader"] { background: transparent !important; }
 
-/* Sidebar Styling */
 [data-testid="stSidebar"] { 
     background-color: var(--white) !important; 
     border-right: 1px solid var(--bsh-grey-border); 
@@ -50,7 +47,6 @@ st.markdown("""
     margin-bottom: -5px;
 }
 
-/* Custom Tool Headers */
 .tool-header {
     background: var(--white);
     border-left: 6px solid var(--bsh-orange);
@@ -67,7 +63,6 @@ st.markdown("""
     color: var(--bsh-orange);
 }
 
-/* Standard BSH Buttons */
 div.stButton > button {
     background-color: var(--bsh-orange) !important;
     color: var(--white) !important;
@@ -85,12 +80,10 @@ div.stButton > button:hover {
     transform: translateY(-1px);
 }
 
-/* Forms & Inputs */
 .stTextInput input {
     border-radius: 4px !important;
 }
 
-/* Metrics */
 [data-testid="stMetric"] {
     background: var(--white) !important;
     border: 1px solid var(--bsh-grey-border) !important;
@@ -104,14 +97,13 @@ div.stButton > button:hover {
 </style>
 """, unsafe_allow_html=True)
 
-# ─── DATABASE & DIRECTORY INIT ────────────────────────────────────────────────
+# ─── DATABASE & DIRECTORY INIT ────────────────────────────────
 def ensure_dirs():
     for d in ["results", "temp"]:
         if not os.path.exists(d):
             os.makedirs(d)
 
 def bootstrap_admin():
-    """Ensures the BSH Master Admin exists for MA 2."""
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT 1 FROM users WHERE username=?", ("admin",))
@@ -119,12 +111,11 @@ def bootstrap_admin():
         create_user("admin", "MA2AdminGBS")
     conn.close()
 
-# Initialize core systems
 init_db()
 ensure_dirs()
 bootstrap_admin()
 
-# ─── AUTHENTICATION LOGIN PAGE ────────────────────────────────────────────────
+# ─── AUTHENTICATION ───────────────────────────────────────────
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -133,15 +124,15 @@ if not st.session_state.authenticated:
     with col:
         st.write("##")
         st.write("##")
-        # Centered BSH Login Header
+
         st.markdown("<h1 style='text-align: center; color: #E8491F; font-family: Syne;'>CRAWL-X</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: #666; margin-top: -15px;'>Enterprise SEO Intelligence Login</p>", unsafe_allow_html=True)
-        
+        st.markdown("<p style='text-align: center; color: #666;'>Enterprise SEO Intelligence Login</p>", unsafe_allow_html=True)
+
         with st.form("login_form"):
             user = st.text_input("Username")
             pw = st.text_input("Password", type="password")
             submit = st.form_submit_button("Access BSH Suite")
-            
+
             if submit:
                 if verify_user(user, pw):
                     st.session_state.authenticated = True
@@ -149,36 +140,51 @@ if not st.session_state.authenticated:
                     st.rerun()
                 else:
                     st.error("Invalid Credentials. Access Denied.")
+
     st.stop()
 
-# ─── SIDEBAR & NAVIGATION ─────────────────────────────────────────────────────
+# ─── SIDEBAR ─────────────────────────────────────────────────
 with st.sidebar:
-    # Clean single-line logo
     st.markdown("<div class='logo-text'>CRAWL-X</div>", unsafe_allow_html=True)
     st.caption("BSH SEO Intelligence Suite")
     st.divider()
 
-# Define Core Pages
+# ─── CORE PAGES ──────────────────────────────────────────────
 home_page = st.Page("tools/home.py", title="Dashboard Home", icon="🏠", default=True)
 history_page = st.Page("tools/job_history.py", title="Audit History", icon="📜")
 
-# Auto-discovery for Tool Files in /tools/
+# ─── TOOL AUTO-DISCOVERY ─────────────────────────────────────
 seo_tools = []
 tool_dir = "tools"
 exclude_list = ["home.py", "job_history.py", "__init__.py"]
 
+# Optional: Better icons for specific tools
+icon_map = {
+    "pdf_scanner.py": "📄",
+    "crawler.py": "🕷️",
+    "broken_links.py": "🔗",
+    "seo_audit.py": "📊"
+}
+
 if os.path.exists(tool_dir):
     for file in sorted(os.listdir(tool_dir)):
         if file.endswith(".py") and file not in exclude_list:
-            # Format filename 'bulk_url_opener.py' -> 'Bulk Url Opener'
             display_name = file.replace(".py", "").replace("_", " ").title()
-            seo_tools.append(st.Page(os.path.join(tool_dir, file), title=display_name, icon="🛠️"))
+            icon = icon_map.get(file, "🛠️")
 
-# Create Navigation Structure
+            seo_tools.append(
+                st.Page(
+                    os.path.join(tool_dir, file),
+                    title=display_name,
+                    icon=icon
+                )
+            )
+
+# ─── NAVIGATION ──────────────────────────────────────────────
 pg = st.navigation({
     "Main": [home_page, history_page],
     "CRAWL-X Tools": seo_tools
 })
 
-# Launch Application
+# ─── RUN APP ─────────────────────────────────────────────────
 pg.run()
