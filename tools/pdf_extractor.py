@@ -3,8 +3,9 @@ import pandas as pd
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# import your existing functions (move them here or split into utils)
-# get_sitemap_urls, find_pdfs_on_page, search_keyword_in_pdf
+# ✅ IMPORT YOUR FUNCTIONS HERE
+# Example:
+# from utils.pdf_utils import get_sitemap_urls, find_pdfs_on_page, search_keyword_in_pdf
 
 
 def run_pdf_scan(sitemap_url, keyword, max_workers=10):
@@ -44,9 +45,13 @@ def run_pdf_scan(sitemap_url, keyword, max_workers=10):
     return results, flagged
 
 
-# 🔥 MAIN UI FUNCTION (this is what app.py will call)
-def render():
-    st.header("📄 PDF Keyword Scanner")
+# ✅ MUST BE main()
+def main():
+    st.markdown("""
+    <div class='tool-header'>
+        <div class='tool-title'>📄 PDF Keyword Scanner</div>
+    </div>
+    """, unsafe_allow_html=True)
 
     sitemap_url = st.text_input(
         "Enter Website or Sitemap",
@@ -61,7 +66,6 @@ def render():
             st.error("Please enter a website or sitemap")
             return
 
-        # Auto-fix sitemap
         if not sitemap_url.endswith(".xml"):
             sitemap_url = sitemap_url.rstrip("/") + "/sitemap.xml"
 
@@ -73,7 +77,6 @@ def render():
 
         st.success(f"✅ {len(results)} PDFs scanned | {len(flagged)} flagged")
 
-        # Flagged
         st.subheader("🚨 Flagged PDFs")
         st.dataframe(df_flagged, use_container_width=True)
 
@@ -83,7 +86,6 @@ def render():
             "flagged_pdfs.csv"
         )
 
-        # All
         with st.expander("📁 View All PDFs"):
             st.dataframe(df_all, use_container_width=True)
 
