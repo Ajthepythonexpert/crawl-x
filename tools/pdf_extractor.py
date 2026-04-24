@@ -3,12 +3,8 @@ import pandas as pd
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# ✅ FIXED IMPORT
-from tools.utils.pdf_utils import (
-    get_sitemap_urls,
-    find_pdfs_on_page,
-    search_keyword_in_pdf
-)
+# ✅ FIXED IMPORT (based on your current setup)
+from utils import *
 
 
 def run_pdf_scan(sitemap_url, keyword, max_workers=10):
@@ -19,9 +15,14 @@ def run_pdf_scan(sitemap_url, keyword, max_workers=10):
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(find_pdfs_on_page, url): url for url in page_urls}
+
         for future in as_completed(futures):
             source_url = futures[future]
-            pdfs = future.result()
+            try:
+                pdfs = future.result()
+            except Exception:
+                continue
+
             if pdfs:
                 with lock:
                     for pdf in pdfs:
@@ -38,18 +39,22 @@ def run_pdf_scan(sitemap_url, keyword, max_workers=10):
 
         for future in as_completed(futures):
             pdf_url, src = futures[future]
-            res = future.result()
-            res["source_page"] = src
+            try:
+                res = future.result()
+            except Exception:
+                continue
 
+            res["source_page"] = src
             results.append(res)
-            if res["flagged"]:
+
+            if res.get("flagged"):
                 flagged.append(res)
 
     return results, flagged
 
 
 def main():
-    st.write("✅ PDF TOOL LOADED")  # DEBUG
+    st.write("✅ PDF TOOL LOADED")
 
     st.markdown("""
     <div class='tool-header'>
@@ -57,11 +62,7 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    sitemap_url = st.text_input(
-        "Enter Website or Sitemap",
-        placeholder="https://example.com OR https://example.com/sitemap.xml"
-    )
-
+    sitemap_url = st.text_input("Enter Website or Sitemap")
     keyword = st.text_input("Keyword", value="1993")
 
     if st.button("Run Scan"):
@@ -73,7 +74,7 @@ def main():
         if not sitemap_url.endswith(".xml"):
             sitemap_url = sitemap_url.rstrip("/") + "/sitemap.xml"
 
-        with st.spinner("Scanning PDFs across the website..."):
+        with st.spinner("Scanning PDFs..."):
             try:
                 results, flagged = run_pdf_scan(sitemap_url, keyword)
             except Exception as e:
@@ -83,25 +84,9 @@ def main():
         df_all = pd.DataFrame(results)
         df_flagged = pd.DataFrame(flagged)
 
-        st.success(f"✅ {len(results)} PDFs scanned | {len(flagged)} flagged")
+        st.success(f"{len(results)} PDFs scanned | {len(flagged)} flagged")
 
-        st.subheader("🚨 Flagged PDFs")
-        st.dataframe(df_flagged, use_container_width=True)
-
-        st.download_button(
-            "⬇️ Download Flagged CSV",
-            df_flagged.to_csv(index=False),
-            "flagged_pdfs.csv"
-        )
-
-        with st.expander("📁 View All PDFs"):
-            st.dataframe(df_all, use_container_width=True)
-
-            st.download_button(
-                "⬇️ Download All CSV",
-                df_all.to_csv(index=False),
-                "all_pdfs.csv"
-            )
+        st.dataframe(df_flagged)
 
 
 # 🔥 REQUIRED
