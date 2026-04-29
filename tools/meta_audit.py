@@ -5,6 +5,7 @@ import pandas as pd
 
 from jobs.job_manager import start_job, get_job
 from core.meta_audit import build_meta_audit_script
+from core.scraper import build_meta_audit_script
 
 INFO = {
     "title": "Meta Pixel Auditor",
