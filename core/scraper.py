@@ -126,3 +126,121 @@ for url in sitemap_urls[:300]:
 with open("{out_json}", "w") as f:
     json.dump({{"live": live_urls, "sitemap": sitemap_urls}}, f)
 """
+def build_meta_audit_script(start_url, output_path):
+    excel_path = output_path.replace(".json", ".xlsx")
+
+    return f"""
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
+from collections import deque
+from PIL import ImageFont, ImageDraw, Image
+import pandas as pd
+
+visited = set()
+queue = deque(["{start_url}"])
+base_domain = urlparse("{start_url}").netloc
+
+results = []
+
+def get_pixel_width(text):
+    try:
+        font = ImageFont.truetype("arial.ttf", 16)
+    except:
+        font = ImageFont.load_default()
+
+    img = Image.new("RGB", (1000, 200))
+    draw = ImageDraw.Draw(img)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[2] - bbox[0]
+
+
+def validate(text, type_):
+    if type_ == "title":
+        max_px, min_c, max_c = 600, 50, 60
+    else:
+        max_px, min_c, max_c = 960, 120, 155
+
+    px = get_pixel_width(text)
+    length = len(text)
+
+    return {{
+        "px": px,
+        "len": length,
+        "px_status": "OK" if px <= max_px else "Too Long",
+        "char_status": "OK" if min_c <= length <= max_c else ("Too Short" if length < min_c else "Too Long")
+    }}
+
+
+def get_meta(url):
+    try:
+        r = requests.get(url, timeout=5)
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        title = soup.title.string.strip() if soup.title else ""
+
+        desc_tag = soup.find("meta", attrs={{"name": "description"}})
+        desc = desc_tag["content"].strip() if desc_tag and desc_tag.get("content") else ""
+
+        return title, desc, soup
+    except:
+        return "", "", None
+
+
+while queue:
+    url = queue.popleft()
+    if url in visited:
+        continue
+
+    visited.add(url)
+
+    title, desc, soup = get_meta(url)
+
+    t = validate(title, "title")
+    d = validate(desc, "description")
+
+    issues = []
+
+    if not title:
+        issues.append("Missing Title")
+    if not desc:
+        issues.append("Missing Description")
+
+    if t["px_status"] != "OK":
+        issues.append("Title Pixel Too Long")
+    if t["char_status"] != "OK":
+        issues.append("Title Char Issue")
+
+    if d["px_status"] != "OK":
+        issues.append("Description Pixel Too Long")
+    if d["char_status"] != "OK":
+        issues.append("Description Char Issue")
+
+    if issues:
+        results.append({{
+            "URL": url,
+            "Issues": ", ".join(issues),
+            "Title": title,
+            "Title Length": t["len"],
+            "Title Pixels": t["px"],
+            "Description": desc,
+            "Description Length": d["len"],
+            "Description Pixels": d["px"]
+        }})
+
+    if soup:
+        for link in soup.find_all("a", href=True):
+            full = urljoin(url, link["href"])
+            if urlparse(full).netloc == base_domain:
+                if full not in visited:
+                    queue.append(full)
+
+df = pd.DataFrame(results)
+
+if not df.empty:
+    df.to_excel("{excel_path}", index=False)
+
+import json
+with open("{output_path}", "w") as f:
+    json.dump(results, f, indent=2)
+"""
