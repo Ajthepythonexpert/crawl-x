@@ -10,3 +10,4 @@ bcrypt
 advertools
 openpyxl
 PyMuPDF
+pillow
