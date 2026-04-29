@@ -5,49 +5,44 @@ from datetime import datetime
 
 
 def get_all_tools():
-    """
-    Safely reads INFO dict from each tool file using AST parsing.
-    Never executes the tool code — no more bleed-through onto homepage.
-    """
     tools_list = []
     tool_dir = "tools"
     exclude = ["home.py", "job_history.py", "__init__.py"]
 
-    if os.path.exists(tool_dir):
-        for file in sorted(os.listdir(tool_dir)):
-            if not file.endswith(".py") or file in exclude:
-                continue
+    if not os.path.exists(tool_dir):
+        return tools_list
 
-            path = os.path.join(tool_dir, file)
-            info = {
-                "title": file.replace(".py", "").replace("_", " ").title(),
-                "icon": "🛠️",
-                "description": "CRAWL-X Audit Tool.",
-                "filename": file
-            }
+    for file in sorted(os.listdir(tool_dir)):
+        if not file.endswith(".py") or file in exclude:
+            continue
 
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    source = f.read()
+        path = os.path.join(tool_dir, file)
 
-                tree = ast.parse(source)
+        info = {
+            "title": file.replace(".py", "").replace("_", " ").title(),
+            "icon": "🛠️",
+            "description": "CRAWL-X Audit Tool.",
+            "filename": file
+        }
 
-                # Walk the AST looking for INFO = { ... } assignment
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Assign):
-                        for target in node.targets:
-                            if isinstance(target, ast.Name) and target.id == "INFO":
-                                # Safely evaluate the dict literal
-                                parsed = ast.literal_eval(node.value)
-                                if isinstance(parsed, dict):
-                                    info.update(parsed)
-                                break
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                source = f.read()
 
-            except Exception:
-                pass  # If parsing fails, use default info
+            tree = ast.parse(source)
 
-            info["filename"] = file
-            tools_list.append(info)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and target.id == "INFO":
+                            parsed = ast.literal_eval(node.value)
+                            if isinstance(parsed, dict):
+                                info.update(parsed)
+                            break
+        except:
+            pass
+
+        tools_list.append(info)
 
     return tools_list
 
