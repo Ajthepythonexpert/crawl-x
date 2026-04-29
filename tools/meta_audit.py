@@ -29,8 +29,8 @@ def render():
 
     # ---- FORM ----
     with st.form("meta_form"):
-        start_url = st.text_input("Start URL", placeholder="https://example.com")
-        submitted = st.form_submit_button("🚀 Start Meta Audit")
+    sitemap_url = st.text_input("Sitemap URL", placeholder="https://example.com/sitemap.xml")
+    submitted = st.form_submit_button("🚀 Start Meta Audit")
 
     # ---- START JOB ----
     if submitted and "meta" not in st.session_state["jobs"]:
@@ -42,7 +42,7 @@ def render():
         params = {"start_url": start_url}
 
         def builder(output_path):
-            return build_meta_audit_script(start_url, output_path)
+           return build_meta_audit_script(sitemap_url, output_path)
 
         job_id = start_job(user_id, "meta", params, builder)
         st.session_state["jobs"]["meta"] = job_id
