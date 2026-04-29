@@ -27,22 +27,22 @@ def render():
     </div>
     """, unsafe_allow_html=True)
 
-    # ---- FORM ----
+    # ---- INPUT ----
     with st.form("meta_form"):
-    sitemap_url = st.text_input("Sitemap URL", placeholder="https://example.com/sitemap.xml")
-    submitted = st.form_submit_button("🚀 Start Meta Audit")
+        sitemap_url = st.text_input("Sitemap URL", placeholder="https://example.com/sitemap.xml")
+        submitted = st.form_submit_button("🚀 Start Meta Audit")
 
     # ---- START JOB ----
     if submitted and "meta" not in st.session_state["jobs"]:
-        if not start_url:
-            st.error("Please provide a valid URL.")
+        if not sitemap_url:
+            st.error("Please provide a Sitemap URL.")
             return
 
         user_id = st.session_state.get("user_id", "admin")
-        params = {"start_url": start_url}
+        params = {"sitemap_url": sitemap_url}
 
         def builder(output_path):
-           return build_meta_audit_script(sitemap_url, output_path)
+            return build_meta_audit_script(sitemap_url, output_path)
 
         job_id = start_job(user_id, "meta", params, builder)
         st.session_state["jobs"]["meta"] = job_id
@@ -60,12 +60,14 @@ def render():
             st.caption(f"**Job ID:** `{job_id}`")
 
             if status in ["queued", "running"]:
-                with st.spinner(f"⏳ Crawling & auditing ({status.upper()})..."):
+                with st.spinner(f"⏳ Auditing ({status.upper()})..."):
                     time.sleep(2)
                     st.rerun()
 
             elif status == "failed":
-                st.error(f"❌ Job failed: {job[7]}")
+                st.error("❌ Job failed")
+                st.write(job)
+
                 if st.button("Start New Audit"):
                     st.session_state["jobs"].pop("meta", None)
                     st.rerun()
@@ -90,11 +92,10 @@ def render():
                 col2.metric("✔️ Status", "Completed")
 
                 if df.empty:
-                    st.success("🎉 No meta issues found. All pages optimized!")
+                    st.success("🎉 No meta issues found!")
                 else:
                     st.dataframe(df, use_container_width=True)
 
-                # ---- DOWNLOAD ----
                 with open(excel_path, "rb") as f:
                     st.download_button(
                         "⬇️ Download Excel Report",
@@ -103,7 +104,6 @@ def render():
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
-                # ---- RESET ----
                 if st.button("Start New Audit"):
                     st.session_state["jobs"].pop("meta", None)
                     st.rerun()
