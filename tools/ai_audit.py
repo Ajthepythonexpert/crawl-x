@@ -11,6 +11,7 @@ import google.generativeai as genai
 
 # Import helpers
 from core.utils import is_garbage_link, check_asset_health, get_image_details
+from core.pagespeed import analyze_pagespeed
 
 def render():
 
@@ -18,6 +19,10 @@ def render():
 
     # Sidebar
     user_api_key = st.sidebar.text_input("Gemini API Key", type="password")
+    pagespeed_api_key = st.sidebar.text_input(
+    "Google PageSpeed API Key",
+    type="password"
+    )
 
     # Inputs
     url_input = st.text_input("Target URL", value="https://www.bosch-home.com/za/en/services")
@@ -40,6 +45,7 @@ def render():
 
                 tabs = st.tabs([
                     "📋 Diagnosis",
+                    "⚡ PageSpeed",
                     "🧠 AI Strategy",
                     "🔗 Links",
                     "📊 Density",
@@ -202,6 +208,104 @@ def render():
                         st.success("No Ghost issues found.")
                     else:
                         st.dataframe(df_ghosts)
+
+            # ---------------------------
+                # ⚡ PageSpeed Audit
+                # ---------------------------
+                with tabs[5]:
+                
+                    st.subheader("⚡ Google PageSpeed Audit")
+                
+                    if not pagespeed_api_key:
+                        st.info("Enter Google PageSpeed API Key.")
+                    else:
+                
+                        with st.spinner("Running PageSpeed Audit..."):
+                
+                            ps_data = analyze_pagespeed(
+                                url_input,
+                                pagespeed_api_key
+                            )
+                
+                            if "error" in ps_data:
+                                st.error(ps_data["error"])
+                
+                            else:
+                
+                                col1, col2, col3, col4 = st.columns(4)
+                
+                                col1.metric(
+                                    "Performance",
+                                    f"{ps_data['performance_score']}"
+                                )
+                
+                                col2.metric(
+                                    "SEO",
+                                    f"{ps_data['seo_score']}"
+                                )
+                
+                                col3.metric(
+                                    "Accessibility",
+                                    f"{ps_data['accessibility_score']}"
+                                )
+                
+                                col4.metric(
+                                    "Best Practices",
+                                    f"{ps_data['best_practices_score']}"
+                                )
+                
+                                st.divider()
+                
+                                metric_df = pd.DataFrame([
+                                    ["FCP", ps_data["fcp"]],
+                                    ["LCP", ps_data["lcp"]],
+                                    ["CLS", ps_data["cls"]],
+                                    ["Speed Index", ps_data["speed_index"]],
+                                    ["TBT", ps_data["tbt"]],
+                                ], columns=["Metric", "Value"])
+                
+                                st.dataframe(
+                                    metric_df,
+                                    use_container_width=True
+                                )
+                
+                                # AI recommendations
+                                if user_api_key:
+                
+                                    genai.configure(api_key=user_api_key)
+                
+                                    model = genai.GenerativeModel(
+                                        "gemini-3-flash-preview"
+                                    )
+                
+                                    perf_prompt = f'''
+                                    Analyze these Core Web Vitals:
+                
+                                    Performance Score: {ps_data['performance_score']}
+                                    LCP: {ps_data['lcp']}
+                                    CLS: {ps_data['cls']}
+                                    TBT: {ps_data['tbt']}
+                
+                                    Provide:
+                                    - SEO impact
+                                    - UX issues
+                                    - Performance fixes
+                                    - Developer recommendations
+                                    '''
+                
+                                    try:
+                                        ai_perf = model.generate_content(
+                                            perf_prompt
+                                        )
+                
+                                        st.subheader(
+                                            "🧠 AI Performance Recommendations"
+                                        )
+                
+                                        st.write(ai_perf.text)
+
+                    except Exception as e:
+                        st.error(e)
 
         except Exception as e:
             st.error(f"Audit failed: {e}")
