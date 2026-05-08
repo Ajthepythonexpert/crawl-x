@@ -138,7 +138,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # -------- CONFIG --------
 HEADERS = {{"User-Agent": "Mozilla/5.0"}}
-MAX_WORKERS = 10
+MAX_WORKERS = 15
 
 # -------- GET SITEMAP URLS --------
 def get_sitemap_urls(url):
@@ -180,9 +180,9 @@ def get_pixel_width(text):
 # -------- VALIDATION --------
 def validate(text, type_):
     if type_ == "title":
-        max_px, min_c, max_c = 600, 50, 60
+        max_px, min_c, max_c = 600, 5, 60
     else:
-        max_px, min_c, max_c = 960, 120, 155
+        max_px, min_c, max_c = 960, 5, 155
 
     px = get_pixel_width(text)
     length = len(text)
