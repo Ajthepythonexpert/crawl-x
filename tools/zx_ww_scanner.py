@@ -13,11 +13,17 @@ from urllib3.util.retry import Retry
 INFO = {
     "title": "ZX / WW Auditor",
     "icon": "🎯",
-    "description": "Deep-scan sitemaps for legacy ZX/WW paths and structural BSH link issues."
+    "description": "Deep-scan full sitemap for legacy ZX/WW pathing issues."
 }
 
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# --- PAGE CONFIG ---
+st.set_page_config(
+    page_title="ZX / WW Auditor",
+    layout="wide"
+)
 
 # --- CONFIGURATION ---
 SPECIAL_PATHS = ["zx", "ww"]
@@ -29,6 +35,7 @@ def create_session():
 
     s = requests.Session()
 
+    # Retry once
     retries = Retry(
         total=1,
         backoff_factor=1,
@@ -44,6 +51,7 @@ def create_session():
     s.mount("https://", adapter)
     s.mount("http://", adapter)
 
+    # Browser-like User-Agent
     s.headers.update({
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -95,6 +103,7 @@ def detect_special(url):
 
     try:
         parsed = urlparse(url)
+
         parts = parsed.path.strip("/").split("/")
 
         if parts and parts[0].lower() in SPECIAL_PATHS:
@@ -105,8 +114,10 @@ def detect_special(url):
 
     return None
 
-# --- FETCH SITEMAP URLS ---
+# --- FETCH ALL SITEMAP URLS ---
 def fetch_sitemap_urls(sm_url):
+
+    urls = set()
 
     try:
 
@@ -118,17 +129,31 @@ def fetch_sitemap_urls(sm_url):
         if r.status_code != 200:
             return []
 
-        found = re.findall(
-            r'<loc>(https?://[^<]+)</loc>',
+        locs = re.findall(
+            r"<loc>(https?://[^<]+)</loc>",
             r.text
         )
 
-        return list(set([u.strip() for u in found]))
+        for loc in locs:
+
+            loc = loc.strip()
+
+            # Nested sitemap support
+            if loc.endswith(".xml"):
+
+                nested_urls = fetch_sitemap_urls(loc)
+
+                urls.update(nested_urls)
+
+            else:
+                urls.add(loc)
 
     except:
-        return []
+        pass
 
-# --- CORE SCANNER ---
+    return list(urls)
+
+# --- PAGE SCANNER ---
 def scan_page(url):
 
     results = []
@@ -173,65 +198,65 @@ def render():
     st.header("🎯 ZX / WW Auditor")
 
     st.markdown(
-        "Directly scan a sitemap to identify legacy ZX / WW pathing issues."
+        "Deep scan the FULL sitemap and detect ZX / WW pathing issues."
     )
 
     sitemap_url = st.text_input(
         "Enter Sitemap URL",
-        placeholder="https://www.bosch-home.com/sitemap.xml"
+        placeholder="https://www.example.com/sitemap.xml"
     )
 
-    scan_limit = st.slider(
-        "Page Limit (Safety)",
-        10,
-        500,
-        100
-    )
-
-    if st.button("🚀 Launch Deep Audit", use_container_width=True):
+    if st.button("🚀 Launch Full Audit", use_container_width=True):
 
         if not sitemap_url:
+
             st.warning("Please enter a valid sitemap URL.")
+
             return
 
-        with st.status("🚀 Initializing Scan...", expanded=True) as status:
+        with st.status("🚀 Initializing Full Sitemap Scan...", expanded=True) as status:
 
-            st.write("Fetching URLs from sitemap...")
+            st.write("Fetching all sitemap URLs...")
 
             all_urls = fetch_sitemap_urls(sitemap_url)
 
-            target_urls = all_urls[:scan_limit]
-
-            if not target_urls:
+            if not all_urls:
 
                 status.update(
-                    label="Error: Sitemap Unreachable",
+                    label="❌ Unable to fetch sitemap URLs",
                     state="error"
                 )
 
                 return
 
-            st.write(f"Auditing {len(target_urls)} pages...")
+            # FULL SCAN
+            target_urls = all_urls
+
+            st.write(f"✅ Total Pages Found: {len(target_urls)}")
 
             all_findings = []
 
             progress_bar = st.progress(0)
 
+            st.write("🔍 Scanning pages for ZX / WW links...")
+
             with ThreadPoolExecutor(max_workers=MAX_THREADS_SCAN) as executor:
 
                 futures = {
-                    executor.submit(scan_page, u): u
-                    for u in target_urls
+                    executor.submit(scan_page, url): url
+                    for url in target_urls
                 }
 
-                for i, f in enumerate(as_completed(futures)):
+                for i, future in enumerate(as_completed(futures)):
 
-                    res = f.result()
+                    result = future.result()
 
-                    if res:
-                        all_findings.extend(res)
+                    if result:
+                        all_findings.extend(result)
 
-                    progress_bar.progress((i + 1) / len(target_urls))
+                    progress_bar.progress(
+                        (i + 1) / len(target_urls)
+                    )
 
             # --- RESULTS ---
             if all_findings:
@@ -239,13 +264,18 @@ def render():
                 df = pd.DataFrame(all_findings)
 
                 status.update(
-                    label=f"Audit Complete: {len(df)} Issues Found",
+                    label=f"✅ Audit Complete - {len(df)} Issues Found",
                     state="complete"
                 )
 
-                st.error(f"Detected {len(df)} ZX / WW Issues")
+                st.error(
+                    f"❌ Detected {len(df)} ZX / WW Issues"
+                )
 
-                st.dataframe(df, use_container_width=True)
+                st.dataframe(
+                    df,
+                    use_container_width=True
+                )
 
                 csv = df.to_csv(index=False).encode("utf-8")
 
@@ -259,12 +289,12 @@ def render():
             else:
 
                 status.update(
-                    label="Audit Complete: Site is Clean!",
+                    label="✅ Audit Complete - No Issues Found",
                     state="complete"
                 )
 
                 st.success(
-                    "No ZX / WW issues detected on the audited pages."
+                    "🎉 No ZX / WW issues detected in the sitemap."
                 )
 
 # --- RUN APP ---
