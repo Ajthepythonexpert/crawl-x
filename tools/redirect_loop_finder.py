@@ -1,121 +1,340 @@
 import streamlit as st
-import time
-import json
-import os
+import requests
 import pandas as pd
-from urllib.parse import urlparse
+import re
+import urllib3
+from urllib.parse import urljoin
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-from jobs.job_manager import start_job, get_job
-from core.scraper import build_redirect_script
+# ---------------- PAGE CONFIG ----------------
+st.set_page_config(
+    page_title="Redirect Loop Finder",
+    layout="wide"
+)
 
+# Disable SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# ---------------- CONFIG ----------------
+TIMEOUT = 20
+MAX_WORKERS = 10
+MAX_REDIRECTS = 10
+
+# ---------------- SESSION ----------------
+def create_session():
+
+    s = requests.Session()
+
+    retries = Retry(
+        total=1,
+        backoff_factor=1,
+        status_forcelist=[500, 502, 503, 504]
+    )
+
+    adapter = HTTPAdapter(
+        pool_connections=MAX_WORKERS,
+        pool_maxsize=MAX_WORKERS,
+        max_retries=retries
+    )
+
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+
+    s.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0 Safari/537.36"
+        )
+    })
+
+    s.verify = False
+
+    return s
+
+SESSION = create_session()
+
+# ---------------- FETCH SITEMAP ----------------
+def fetch_sitemap_urls(sitemap_url):
+
+    urls = set()
+
+    try:
+
+        r = SESSION.get(
+            sitemap_url,
+            timeout=TIMEOUT
+        )
+
+        locs = re.findall(
+            r"<loc>(https?://[^<]+)</loc>",
+            r.text
+        )
+
+        for loc in locs:
+
+            loc = loc.strip()
+
+            # Nested sitemap support
+            if loc.endswith(".xml"):
+
+                nested = fetch_sitemap_urls(loc)
+
+                urls.update(nested)
+
+            else:
+                urls.add(loc)
+
+    except:
+        pass
+
+    return list(urls)
+
+# ---------------- REDIRECT CHECKER ----------------
+def trace_redirects(url):
+
+    try:
+
+        current_url = url
+
+        visited = []
+
+        chain = []
+
+        for _ in range(MAX_REDIRECTS):
+
+            # LOOP DETECTED
+            if current_url in visited:
+
+                chain.append(current_url)
+
+                return {
+                    "URL": url,
+                    "Final URL": current_url,
+                    "Status": "LOOP",
+                    "Redirect Chain": " -> ".join(chain)
+                }
+
+            visited.append(current_url)
+
+            r = SESSION.get(
+                current_url,
+                timeout=TIMEOUT,
+                allow_redirects=False
+            )
+
+            status = r.status_code
+
+            chain.append(f"{current_url} [{status}]")
+
+            # REDIRECT
+            if status in [301, 302, 307, 308]:
+
+                location = r.headers.get("Location")
+
+                if not location:
+                    break
+
+                next_url = urljoin(current_url, location)
+
+                current_url = next_url
+
+            # 404
+            elif status == 404:
+
+                return {
+                    "URL": url,
+                    "Final URL": current_url,
+                    "Status": 404,
+                    "Redirect Chain": " -> ".join(chain)
+                }
+
+            # FINAL SUCCESS
+            else:
+
+                # Only report problematic URLs
+                if len(chain) > 1:
+
+                    return {
+                        "URL": url,
+                        "Final URL": current_url,
+                        "Status": status,
+                        "Redirect Chain": " -> ".join(chain)
+                    }
+
+                return None
+
+        # TOO MANY REDIRECTS
+        return {
+            "URL": url,
+            "Final URL": current_url,
+            "Status": "TOO MANY REDIRECTS",
+            "Redirect Chain": " -> ".join(chain)
+        }
+
+    except requests.exceptions.TooManyRedirects:
+
+        return {
+            "URL": url,
+            "Final URL": current_url,
+            "Status": "LOOP",
+            "Redirect Chain": "Too many redirects"
+        }
+
+    except Exception as e:
+
+        return {
+            "URL": url,
+            "Final URL": "",
+            "Status": "ERROR",
+            "Redirect Chain": str(e)
+        }
+
+# ---------------- UI ----------------
 def render():
-    if "jobs" not in st.session_state:
-        st.session_state["jobs"] = {}
 
     st.markdown("""
     <div class="tool-header">
         <div class="tool-icon">🔄</div>
         <div>
             <div class="tool-title">Redirect Loop Finder</div>
-            <div class="tool-sub">Trace chains · Detect infinite loops · Find 404s</div>
+            <div class="tool-sub">
+                Detect redirect chains, infinite loops, and 404 pages
+            </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # 1. USER INPUT FORM
-    with st.form("rd_form"):
-        sitemap_url = st.text_input("Sitemap XML URL", placeholder="https://example.com/sitemap.xml")
-        path_filter = st.text_input("Sub-folder filter (optional)", placeholder="e.g. /products/")
-        submitted = st.form_submit_button("🚀 Start Redirect Audit")
+    sitemap_url = st.text_input(
+        "Sitemap XML URL",
+        placeholder="https://example.com/sitemap.xml"
+    )
 
-    # 2. START JOB LOGIC 
-    if submitted and "redirect" not in st.session_state["jobs"]:
+    path_filter = st.text_input(
+        "Sub-folder filter (optional)",
+        placeholder="/products/"
+    )
+
+    if st.button(
+        "🚀 Start Redirect Audit",
+        use_container_width=True
+    ):
+
         if not sitemap_url:
-            st.error("Please provide a Sitemap URL.")
+
+            st.error("Please provide a sitemap URL.")
+
             return
 
-        user_id = st.session_state.get("user_id", "admin")
-        params = {"sitemap_url": sitemap_url, "path_filter": path_filter}
-        
-        def builder(output_path):
-            return build_redirect_script(sitemap_url, path_filter, output_path)
+        with st.status(
+            "🔍 Scanning Redirects...",
+            expanded=True
+        ) as status:
 
-        job_id = start_job(user_id, "redirect", params, builder)
-        st.session_state["jobs"]["redirect"] = job_id
-        st.rerun()
+            st.write("Fetching sitemap URLs...")
 
-    # 3. POLLING & RESULTS LOGIC
-    if "redirect" in st.session_state["jobs"]:
-        job_id = st.session_state["jobs"]["redirect"]
-        job = get_job(job_id)
-        
-        if job:
-            status = job[3]
-            result_path = job[5]
-            st.caption(f"**Job ID:** `{job_id}`")
+            urls = fetch_sitemap_urls(sitemap_url)
 
-            if status in ["queued", "running"]:
-                with st.spinner(f"⏳ Tracing Redirects ({status.upper()})..."):
-                    time.sleep(2)
-                    st.rerun()
-            
-            elif status == "failed":
-                st.error(f"❌ Job failed: {job[7]}")
-                if st.button("Start New Audit"):
-                    st.session_state["jobs"].pop("redirect", None)
-                    st.rerun()
+            if not urls:
 
-            elif status == "completed":
-                if not result_path or not os.path.exists(result_path):
-                    st.error("Result file missing from server.")
-                    return
+                status.update(
+                    label="❌ No URLs found in sitemap",
+                    state="error"
+                )
 
-                try:
-                    with open(result_path, "r") as f:
-                        data = json.load(f)
-                except:
-                    st.error("Invalid or corrupted result file.")
-                    return
-                
-                # 🔧 IMPROVEMENT 1 & 2: Safe Data Processing
-                df = pd.DataFrame(data.get("results", []))
-                
-                if df.empty:
-                    st.warning("Crawl finished, but no data was returned.")
-                elif "Status" not in df.columns:
-                    st.error("Invalid result format: Missing 'Status' column.")
-                else:
-                    # Safe Metrics Filtering
-                    status_col = df["Status"]
-                    redirects = df[status_col.isin([301, 302, 307, 308, "LOOP"])]
-                    loops = df[status_col == "LOOP"]
-                    dead = df[status_col == 404]
+                return
 
-                    st.success("✅ Trace Complete!")
-                    
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Total URLs", len(df))
-                    m2.metric("Redirects", len(redirects))
-                    m3.metric("Loops", len(loops))
-                    m4.metric("Dead (404)", len(dead))
+            # FILTER PATH
+            if path_filter:
 
-                    st.markdown("### 📋 Audit Results")
-                    st.dataframe(df, use_container_width=True)
+                urls = [
+                    u for u in urls
+                    if path_filter in u
+                ]
 
-                    # 🔧 IMPROVEMENT 3: Add Download Button
-                    st.divider()
-                    col_dl, col_new = st.columns([1, 4])
-                    with col_dl:
-                        st.download_button(
-                            "⬇️ Download JSON",
-                            data=json.dumps(data, indent=2),
-                            file_name=f"redirect_audit_{job_id}.json",
-                            mime="application/json"
-                        )
-                    with col_new:
-                        if st.button("Start New Audit"):
-                            st.session_state["jobs"].pop("redirect", None)
-                            st.rerun()
+            total = len(urls)
 
+            st.write(f"🚀 Auditing {total} URLs...")
+
+            findings = []
+
+            progress = st.progress(0)
+
+            with ThreadPoolExecutor(
+                max_workers=MAX_WORKERS
+            ) as executor:
+
+                futures = {
+                    executor.submit(trace_redirects, u): u
+                    for u in urls
+                }
+
+                for i, f in enumerate(as_completed(futures)):
+
+                    try:
+
+                        res = f.result()
+
+                        if res:
+                            findings.append(res)
+
+                    except:
+                        pass
+
+                    progress.progress(
+                        (i + 1) / total
+                    )
+
+            # ---------------- RESULTS ----------------
+            if findings:
+
+                df = pd.DataFrame(findings)
+
+                redirects = df[
+                    df["Status"].isin(
+                        [301, 302, 307, 308]
+                    )
+                ]
+
+                loops = df[
+                    df["Status"] == "LOOP"
+                ]
+
+                dead = df[
+                    df["Status"] == 404
+                ]
+
+                st.success("✅ Redirect Audit Complete")
+
+                m1, m2, m3, m4 = st.columns(4)
+
+                m1.metric("Total Issues", len(df))
+                m2.metric("Redirects", len(redirects))
+                m3.metric("Loops", len(loops))
+                m4.metric("404 Pages", len(dead))
+
+                st.markdown("### 📋 Redirect Findings")
+
+                st.dataframe(
+                    df,
+                    use_container_width=True
+                )
+
+                st.download_button(
+                    "📩 Download Report",
+                    df.to_csv(index=False).encode("utf-8"),
+                    "redirect_audit.csv",
+                    "text/csv"
+                )
+
+            else:
+
+                st.success(
+                    "🎉 No redirect issues detected!"
+                )
+
+# ---------------- RUN APP ----------------
 if __name__ == "__main__":
     render()
