@@ -18,91 +18,197 @@ INFO = {
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# --- PAGE CONFIG ---
+st.set_page_config(
+    page_title="Self-Link Finder",
+    layout="wide"
+)
+
 # --- SESSION ---
 def create_session():
+
     s = requests.Session()
-    retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
-    adapter = HTTPAdapter(pool_connections=30, pool_maxsize=30, max_retries=retries)
+
+    retries = Retry(
+        total=1,
+        backoff_factor=1,
+        status_forcelist=[500, 502, 503, 504]
+    )
+
+    adapter = HTTPAdapter(
+        pool_connections=20,
+        pool_maxsize=20,
+        max_retries=retries
+    )
+
     s.mount("https://", adapter)
     s.mount("http://", adapter)
-    s.headers.update({"User-Agent": "CRAWL-X-SelfLink-Auditor"})
+
+    s.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0 Safari/537.36"
+        )
+    })
+
     s.verify = False
+
     return s
 
 SESSION = create_session()
 
 # --- HELPERS ---
 def classify_link(a):
+
     if a.find_parent("nav"):
         return "Navigation"
+
     if a.find_parent("footer"):
         return "Footer"
+
     if "btn" in " ".join(a.get("class", [])).lower():
         return "CTA Button"
+
     return "Body/Inline"
 
 def is_self_link(source_url, target_url):
+
     return source_url.rstrip("/") == target_url.rstrip("/")
+
+# --- IGNORE BREADCRUMB / NAVIGATION LINKS ---
+def should_ignore_link(a):
+
+    # Ignore breadcrumb components
+    if a.find_parent(attrs={"data-testid": re.compile("breadcrumb", re.I)}):
+        return True
+
+    # Ignore navigation structures
+    if a.find_parent("nav"):
+        return True
+
+    # Ignore breadcrumb/menu/tab classes
+    classes = " ".join(a.get("class", [])).lower()
+
+    ignore_keywords = [
+        "breadcrumb",
+        "tab",
+        "menu",
+        "navigation",
+        "nav"
+    ]
+
+    if any(k in classes for k in ignore_keywords):
+        return True
+
+    return False
 
 # --- CORE SCAN ---
 def audit_self_links(url):
+
     results = []
+
     try:
-        r = SESSION.get(url, timeout=10)
+
+        r = SESSION.get(
+            url,
+            timeout=20
+        )
+
         if r.status_code != 200:
             return results
 
         soup = BeautifulSoup(r.text, "lxml")
 
         for a in soup.find_all("a", href=True):
+
+            # Ignore breadcrumb/navigation links
+            if should_ignore_link(a):
+                continue
+
             href = a["href"]
 
+            # Ignore anchors and JS links
             if href.startswith("#") or "javascript:" in href:
                 continue
 
             full_link = urljoin(url, href)
 
+            # SELF LINK CHECK
             if is_self_link(url, full_link):
+
                 results.append({
                     "Source Page": url,
                     "Self-Link URL": full_link,
                     "Element Type": classify_link(a),
-                    "Anchor Text": a.get_text(strip=True)[:50] or "[Image/Icon]"
+                    "Anchor Text": (
+                        a.get_text(strip=True)[:50]
+                        or "[Image/Icon]"
+                    )
                 })
+
     except:
         pass
 
     return results
 
-# --- SITEMAP FETCH ---
+# --- FETCH SITEMAP URLS ---
 def fetch_sitemap_urls(sm_url):
+
+    urls = set()
+
     try:
-        r = SESSION.get(sm_url, timeout=15)
-        urls = re.findall(r'<loc>(https?://[^<]+)</loc>', r.text)
-        return list(set([u.strip() for u in urls]))
+
+        r = SESSION.get(
+            sm_url,
+            timeout=20
+        )
+
+        locs = re.findall(
+            r'<loc>(https?://[^<]+)</loc>',
+            r.text
+        )
+
+        for loc in locs:
+
+            loc = loc.strip()
+
+            # Nested sitemap support
+            if loc.endswith(".xml"):
+
+                nested = fetch_sitemap_urls(loc)
+
+                urls.update(nested)
+
+            else:
+                urls.add(loc)
+
     except:
-        return []
+        pass
+
+    return list(urls)
 
 # --- UI ---
 def render():
+
     st.header("🔄 Self-Link Finder")
-    st.markdown("Identify redundant links that point back to the same page.")
+
+    st.markdown(
+        "Identify redundant internal links that point "
+        "back to the same page."
+    )
 
     sitemap_input = st.text_input(
         "Sitemap URL",
-        placeholder="https://www.bosch-home.com/sitemap.xml"
+        placeholder="https://www.example.com/sitemap.xml"
     )
 
-    limit = st.number_input(
-        "Max Pages (0 = Full Sitemap)",
-        min_value=0,
-        value=0
-    )
-
-    if st.button("Run Hygiene Audit", use_container_width=True):
+    if st.button("🚀 Run Full Audit", use_container_width=True):
 
         if not sitemap_input:
+
             st.error("Please provide a sitemap URL.")
+
             return
 
         with st.status("🔍 Scanning pages...", expanded=True) as status:
@@ -110,58 +216,82 @@ def render():
             urls = fetch_sitemap_urls(sitemap_input)
 
             if not urls:
-                status.update(label="No URLs found in sitemap.", state="error")
+
+                status.update(
+                    label="❌ No URLs found in sitemap.",
+                    state="error"
+                )
+
                 return
 
-            if limit > 0:
-                urls = urls[:limit]
-
             total = len(urls)
+
             st.write(f"🚀 Auditing {total} pages...")
 
-            MAX_WORKERS = 30
-            BATCH_SIZE = 100
+            MAX_WORKERS = 10
 
             progress = st.progress(0)
+
             findings = []
 
-            for i in range(0, total, BATCH_SIZE):
-                batch = urls[i:i + BATCH_SIZE]
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
 
-                with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                    futures = {executor.submit(audit_self_links, u): u for u in batch}
+                futures = {
+                    executor.submit(audit_self_links, u): u
+                    for u in urls
+                }
 
-                    for j, f in enumerate(as_completed(futures)):
-                        try:
-                            res = f.result()
-                            if res:
-                                findings.extend(res)
-                        except:
-                            pass
+                for i, f in enumerate(as_completed(futures)):
 
-                        progress.progress(min((i + j + 1) / total, 1.0))
+                    try:
 
+                        res = f.result()
+
+                        if res:
+                            findings.extend(res)
+
+                    except:
+                        pass
+
+                    progress.progress(
+                        min((i + 1) / total, 1.0)
+                    )
+
+            # --- RESULTS ---
             if findings:
+
                 status.update(
-                    label=f"Scan Complete: {len(findings)} Self-Links Found",
+                    label=f"✅ Scan Complete: {len(findings)} Self-Links Found",
                     state="complete"
                 )
 
                 df = pd.DataFrame(findings)
+
                 st.warning("⚠️ Redundant Self-Links Detected")
-                st.dataframe(df, use_container_width=True)
+
+                st.dataframe(
+                    df,
+                    use_container_width=True
+                )
 
                 csv = df.to_csv(index=False).encode("utf-8")
+
                 st.download_button(
-                    "Download Report",
+                    "📩 Download Report",
                     csv,
                     "self_links.csv",
                     "text/csv"
                 )
 
             else:
-                status.update(label="Scan Complete: No Issues", state="complete")
-                st.success("✅ No self-links found!")
 
+                status.update(
+                    label="✅ Scan Complete: No Issues",
+                    state="complete"
+                )
+
+                st.success("🎉 No self-links found!")
+
+# --- RUN APP ---
 if __name__ == "__main__":
     render()
