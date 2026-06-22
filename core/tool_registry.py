@@ -1,13 +1,9 @@
-# -------------------------------------------------------------------------
-# IMPORT BLOCK WITH PRODUCT TRACKER INCLUDED
-# -------------------------------------------------------------------------
 from core.scraper import (
     build_keyword_script, 
     build_redirect_script, 
     build_sitemap_script,
     build_product_tracker_script
 )
-# -------------------------------------------------------------------------
 
 def get_builder(tool_name, params):
     """
@@ -43,9 +39,8 @@ def get_builder(tool_name, params):
             sitemap_url=params.get("sitemap_url"),
             out_json=path
         )
-# -------------------------------------------------------------------------
-    # START OF PRODUCT DELTA TRACKER REGISTRY MODULE
-    # -------------------------------------------------------------------------
+
+    # 4. PRODUCT DELTA TRACKER REGISTRY
     elif t_name == "product_tracker":
         return lambda path: build_product_tracker_script(
             sitemap_url=params.get("sitemap_url"),
@@ -53,7 +48,6 @@ def get_builder(tool_name, params):
             brand=params.get("brand"),
             out_json=path
         )
-    # -------------------------------------------------------------------------
-    # END OF PRODUCT DELTA TRACKER REGISTRY MODULE SECTION
+
     # Fallback if a tool is not yet registered
     return None
