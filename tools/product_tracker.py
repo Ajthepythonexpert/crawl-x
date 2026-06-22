@@ -8,7 +8,7 @@ import json
 import html
 import asyncio
 import aiohttp
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlparse, urljoin
 import advertools as adv
 
@@ -16,19 +16,15 @@ import advertools as adv
 INFO = {
     "title": "Product Delta Tracker",
     "icon": "📦",
-    "description": "High-performance recursive live crawler parsing advanced product schemas and inventory data levels."
+    "description": "High-performance recursive live crawler processing advanced product schemas and inventory data levels."
 }
 
-# -------------------------------------------------------------------------
-# 🛠️ HELPER: EXCEL MULTI-SHEET GENERATOR (Matches your Scrapy file splits)
-# -------------------------------------------------------------------------
 def build_split_excel(master_list, domain, lang):
     if not master_list:
         return None
         
     df_master = pd.DataFrame(master_list).sort_values(by="Found In")
 
-    # Table splits identical to your stockfinderv2.py closed() method
     df_shop_sheet = df_master[(df_master['URL'].str.contains('/product/')) | (df_master['Active Price'] != 'N/A')]
     df_shop_sheet = df_shop_sheet[['VIB', 'Site Language', 'Found In', 'URL', 'HTTP Status', 'Active Price', 'Promotional Price', 'Actual/Original Price', 'Tax Configuration', 'Stock Status', 'Availability Text Copy']]
 
@@ -57,13 +53,8 @@ def build_split_excel(master_list, domain, lang):
     
     return output.getvalue()
 
-# -------------------------------------------------------------------------
-# 🕷️ PARSER ENGINE: NATIVE TRANSLATION OF YOUR PATHS A, B, AND C
-# -------------------------------------------------------------------------
 def parse_html_inventory(url, html_text, status_code, lang):
     vib = url.rstrip('/').split('/')[-1].split('?')[0]
-    
-    # Standard Baseline Balances
     active_price = "N/A"
     promo_price = ""
     actual_price = "N/A"
@@ -71,8 +62,6 @@ def parse_html_inventory(url, html_text, status_code, lang):
     avail_text_copy = "N/A"
     data_captured = False
 
-    # Regex alternatives replacing Scrapy's scrapy.xpath selectors
-    # --- LOGIC TRIGGER PATH A: SERVER DATA ENGINE (AU, NZ) ---
     body_match = re.search(r'data-page-dimensions=["\']([^"\']+)["\']', html_text)
     if body_match and not data_captured:
         try:
@@ -96,7 +85,6 @@ def parse_html_inventory(url, html_text, status_code, lang):
         except Exception:
             pass
 
-    # --- BRAND NEW LOGIC TRIGGER PATH B: SEO SCHEMA JSON-LD PARSER ---
     if not data_captured:
         schema_scripts = re.findall(r'<script\s+type=["\']application/ld\+json["\']>(.*?)</script>', html_text, re.DOTALL)
         for script_text in schema_scripts:
@@ -120,9 +108,7 @@ def parse_html_inventory(url, html_text, status_code, lang):
             except Exception:
                 pass
 
-    # --- LOGIC TRIGGER PATH C: STANDARD STATIC SCRAPER FALLBACK (ZA, IN, DE) ---
     if not data_captured:
-        # Regex mocks for standard data-testids
         main_price_m = re.search(r'data-testid=["\']price-main-price["\'][^>]*>(.*?)<', html_text)
         reduced_price_m = re.search(r'data-testid=["\']price-reduced-price["\'].*?width:\s*max-content[^>]*>(.*?)<', html_text, re.DOTALL)
         strikethrough_m = re.search(r'data-testid=["\']price-strikethrough-price["\'][^>]*>(.*?)<', html_text)
@@ -145,7 +131,6 @@ def parse_html_inventory(url, html_text, status_code, lang):
         if add_to_cart_btn:
             stock_status = "Out of Stock" if disabled_cart_btn else "In Stock"
 
-    # Universal properties extraction (Retailer Grids & Dealer maps)
     tax_config_m = re.search(r'data-testid=["\']product-price-info["\'][^>]*>(.*?)<', html_text)
     tax_config = tax_config_m.group(1).strip() if tax_config_m else "N/A"
     buy_retail_flag = "Yes" if 'data-testid="buy-area-retailer-grid"' in html_text else "No"
@@ -173,12 +158,8 @@ def parse_html_inventory(url, html_text, status_code, lang):
         'Find Local Dealer': local_dealer
     }
 
-# -------------------------------------------------------------------------
-# ⚙️ RECURSIVE DEEP LINK CRAWLER ENGINE
-# -------------------------------------------------------------------------
 async def fetch_page(session, url):
     try:
-        # Cache-busting headers to bypass CDN layer proxies
         headers = {"Cache-Control": "no-cache", "Pragma": "no-cache"}
         async with session.get(url, timeout=12, allow_redirects=True, headers=headers) as response:
             if response.status == 200:
@@ -193,9 +174,8 @@ async def recursive_site_crawler(start_url, base_lang, product_urls, sm_vibs, pr
     parsed_start = urlparse(start_url)
     allowed_domain = parsed_start.netloc
     
-    # Initialize the tracking queues matching CrawlSpider rules
     to_visit = set([f"{parsed_start.scheme}://{allowed_domain}/{base_lang}/"])
-    to_visit.update(product_urls)  # Seeds from sitemap data
+    to_visit.update(product_urls)
     
     visited = set()
     crawled_data_map = {}
@@ -204,7 +184,6 @@ async def recursive_site_crawler(start_url, base_lang, product_urls, sm_vibs, pr
     sem = asyncio.Semaphore(CONCURRENT_LIMIT)
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     
-    # Hard safety boundary limits for server stability
     MAX_PAGES = 1800
     
     async with aiohttp.ClientSession(headers=headers) as session:
@@ -228,13 +207,11 @@ async def recursive_site_crawler(start_url, base_lang, product_urls, sm_vibs, pr
                 if not html_text:
                     continue
                 
-                # If a product configuration link is spotted, process the advanced pricing matrix fields
                 if "/product/" in url.lower() or "/mkt-product/" in url.lower():
                     parsed_metrics = parse_html_inventory(url, html_text, status_code, base_lang)
                     vib_key = parsed_metrics['VIB']
                     crawled_data_map[vib_key] = parsed_metrics
                 
-                # Recursive Link Extraction corresponding to your Rule(LinkExtractor(allow=f"/{self.lang}/"), follow=True)
                 links = re.findall(r'href=["\'](https?://[^"\']+|/[^"\']*)["\']', html_text)
                 for link in links:
                     if link.startswith("/"):
@@ -242,14 +219,12 @@ async def recursive_site_crawler(start_url, base_lang, product_urls, sm_vibs, pr
                     
                     p_link = urlparse(link)
                     if p_link.netloc == allowed_domain and link not in visited and link not in to_visit:
-                        # Follow matching directories exclusively while discarding raw media files
                         if f"/{base_lang}/" in link.lower() and not any(ext in p_link.path.lower() for ext in ['.pdf', '.jpg', '.png', '.css', '.js', '.zip']):
                             to_visit.add(link)
             
             status_text.markdown(f"⏳ **Deep Recursive Link Crawl Active...** | Pages Scanned: `{len(visited)}` | Discovered Catalog Models: `{len(crawled_data_map)}`")
             progress_container.progress(min(int((len(visited) / 600) * 100), 100))
             
-    # Process unified master balance trace dictionary blocks
     master_reporting_rows = []
     all_unique_vibs = set(crawled_data_map.keys()).union(sm_vibs)
     
@@ -278,9 +253,6 @@ async def recursive_site_crawler(start_url, base_lang, product_urls, sm_vibs, pr
         
     return master_reporting_rows
 
-# -------------------------------------------------------------------------
-# 🖥️ STREAMLIT APPLICATION INTERFACE
-# -------------------------------------------------------------------------
 def render():
     st.title("📦 Product Delta Tracker (Scrapy Translation)")
     st.caption("Deep recursive crawler processing advanced pricing structures and distributor maps across regional targets.")
@@ -298,6 +270,9 @@ def render():
             country = st.text_input("Country Identifier (e.g., ZA, SG, UA)", value="ZA").upper().strip()
         with col2:
             brand = st.selectbox("Target Brand", ["BOSCH", "SIEMENS", "NEFF"])
+            
+        # 🧪 SIMULATION CONTEXT CHECKBOX
+        simulate_past = st.checkbox("⚙️ Simulation Mode: Backdate this run by 7 days (Unlocks Comparison Engine)")
 
     # --- TRIGGER RUN ---
     if st.button("🚀 INITIATE CURRENT WEEKLY INVENTORY SNAPSHOT", use_container_width=True):
@@ -334,8 +309,13 @@ def render():
             )
             loop.close()
             
-            # Save snapshots down into central database frameworks
-            today = datetime.now().strftime("%Y-%m-%d")
+            # Target running date validation logic
+            if simulate_past:
+                # Assign a date from 7 days ago to simulate a baseline history run
+                target_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            else:
+                target_date = datetime.now().strftime("%Y-%m-%d")
+                
             if master_audit_data:
                 conn = sqlite3.connect("database.db")
                 conn.execute("PRAGMA journal_mode=WAL;")
@@ -345,18 +325,18 @@ def render():
                         cur.execute("""
                             INSERT INTO product_snapshots (url, model_number, brand, country, status_code, snapshot_date, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (item['URL'], item['VIB'], brand, country, 200, today, time.time()))
+                        """, (item['URL'], item['VIB'], brand, country, 200, target_date, time.time()))
                 conn.commit()
                 conn.close()
                 
                 st.session_state.master_audit_payload = master_audit_data
-                st.session_state.audit_meta_string = f"✅ Crawl cycle complete! Saved {len(master_audit_data)} platform inventory records."
+                st.session_state.audit_meta_string = f"✅ Crawl complete! Saved {len(master_audit_data)} records for snapshot date: {target_date}"
                 progress_bar.progress(100)
                 status_text.empty()
             else:
                 st.error("No data collected during execution loop phase blocks.")
 
-    # --- IMMEDIATE WORKSPACE BACKUP DOWNLOAD GENERATION ENGINE ---
+    # --- DOWNLOAD GENERATION ENGINE ---
     if st.session_state.master_audit_payload:
         st.success(st.session_state.audit_meta_string)
         with st.container(border=True):
