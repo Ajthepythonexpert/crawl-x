@@ -1,20 +1,23 @@
-# -------------------------------------------------------------------------
-# BULLETPROOF CLOUD PATH ENVIRONMENT FIX
-# -------------------------------------------------------------------------
 import sys
 import os
+import importlib.util
 
-# Get the absolute root working directory of the project
-root_path = os.getcwd()
+# -------------------------------------------------------------------------
+# DYNAMIC MODULE IMPORT LOGIC (Bypasses Streamlit exec() Path Isolation)
+# -------------------------------------------------------------------------
+root_dir = os.getcwd() # Points to /mount/src/crawl-x on Streamlit Cloud
 
-# Force insert the root directory at index 0 so it takes absolute priority
-if root_path not in sys.path:
-    sys.path.insert(0, root_path)
-    
-# Secondary fallback based on file location
-parent_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if parent_path not in sys.path:
-    sys.path.insert(0, parent_path)
+# 1. Dynamically import get_conn from analytics/db.py
+db_spec = importlib.util.spec_from_file_location("db_module", os.path.join(root_dir, "analytics", "db.py"))
+db_module = importlib.util.module_from_spec(db_spec)
+db_spec.loader.exec_module(db_module)
+get_conn = db_module.get_conn
+
+# 2. Dynamically import start_job from core/job_manager.py
+jm_spec = importlib.util.spec_from_file_location("jm_module", os.path.join(root_dir, "core", "job_manager.py"))
+jm_module = importlib.util.module_from_spec(jm_spec)
+jm_spec.loader.exec_module(jm_module)
+start_job = jm_module.start_job
 # -------------------------------------------------------------------------
 
 import streamlit as st
