@@ -135,3 +135,7 @@ def render():
                 if not df_added.empty:
                     st.info(f"Detected {len(df_added)} newly registered product configurations.")
                     st.dataframe(df_added, use_container_width=True)
+                else:
+                    st.write("No newly registered listings located in this temporal range match.")
+    else:
+        st.info(f"Awaiting historical data for country code '{country}'. Run at least two snapshot tasks across different dates for this country to begin historical analysis comparisons.")
