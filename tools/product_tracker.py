@@ -2,127 +2,102 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import time
+import re
+import asyncio
+import aiohttp
 from datetime import datetime
-from urllib.parse import urlparse
-
-# Scrapy High-Performance Core Imports
-import scrapy
-from scrapy.spiders import CrawlSpider, Rule
-from scrapy.linkextractors import LinkExtractor
-from scrapy.crawler import CrawlerRunner
-from scrapy.utils.project import get_project_settings
+from urllib.parse import urlparse, urljoin
 import advertools as adv
-
-# Initialize crochet safely at the module level before any execution loops trigger
-import crochet
-crochet.setup()
 
 # 📦 METADATA DECLARATION FOR THE DASHBOARD REGISTRY LOOP
 INFO = {
     "title": "Product Delta Tracker",
     "icon": "📦",
-    "description": "High-performance asynchronous Scrapy spider to discover inventory discrepancies across markets."
+    "description": "High-performance asynchronous live catalog spider to track inventory deltas."
 }
 
-# -------------------------------------------------------------------------
-# 🕷️ YOUR EXACT WORKING CRAWL SPIDER
-# -------------------------------------------------------------------------
-class BoschGrandMasterSplitAuditor(CrawlSpider):
-    name = 'bosch_split_auditor'
+async def fetch_page(session, url):
+    """Safely handles non-blocking async network resource grabs."""
+    try:
+        async with session.get(url, timeout=15, allow_redirects=True) as response:
+            if response.status == 200:
+                text = await response.text()
+                return url, text
+    except Exception:
+        pass
+    return url, None
 
-    def __init__(self, sitemap_url=None, sitemap_urls_list=None, sitemap_vibs=None, country="ZA", brand="BOSCH", results_accumulator=None, *args, **kwargs):
-        super(BoschGrandMasterSplitAuditor, self).__init__(*args, **kwargs)
-        self.sitemap_url = sitemap_url
-        parsed = urlparse(sitemap_url)
-        self.domain = parsed.netloc
-        self.country = country
-        self.brand = brand
-        self.lang = "vi" if "/vi/" in sitemap_url else "en"
-        self.allowed_domains = [self.domain]
-        self.results_accumulator = results_accumulator if results_accumulator is not None else []
-        
-        self.start_urls = [f"{parsed.scheme}://{self.domain}/{self.lang}/"]
-        if sitemap_urls_list:
-            self.start_urls.extend(sitemap_urls_list)
-        
-        self.rules = (
-            Rule(LinkExtractor(allow=f"/{self.lang}/"), callback='parse_item', follow=True),
-        )
-        self._compile_rules()
-        self.sitemap_vibs = sitemap_vibs if sitemap_vibs else set()
-
-    def parse_item(self, response):
-        url = response.url
-        if "/product/" in url or "/mkt-product/" in url:
-            vib = url.rstrip('/').split('/')[-1].split('?')[0]
+async def async_site_crawler(start_url, base_lang, product_urls, progress_container, status_text):
+    """Executes a high-speed asynchronous link discovery crawl inside the primary thread loop."""
+    parsed_start = urlparse(start_url)
+    allowed_domain = parsed_start.netloc
+    
+    # Initialize lookup queues
+    to_visit = set([f"{parsed_start.scheme}://{allowed_domain}/{base_lang}/"])
+    to_visit.update(product_urls)
+    
+    visited = set()
+    discovered_products = set()
+    
+    # Performance tuning array matching your 16 concurrent connection benchmark
+    CONCURRENT_LIMIT = 16
+    sem = asyncio.Semaphore(CONCURRENT_LIMIT)
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    }
+    
+    # Set a protective iteration boundary to prevent cloud worker runtime stalls
+    MAX_TOTAL_PAGES = 1500
+    
+    async with aiohttp.ClientSession(headers=headers) as session:
+        while to_visit and len(visited) < MAX_TOTAL_PAGES:
+            # Batch out tasks up to our concurrency limit
+            current_batch = [to_visit.pop() for _ in range(min(len(to_visit), CONCURRENT_LIMIT))]
             
-            avail_text = response.xpath('//*[@data-testid="availability-text-with-link-text"]/text()').get()
-            avail_text_copy = avail_text.strip() if avail_text else "In Stock"
+            async def worker(url):
+                async with sem:
+                    if url in visited:
+                        return None
+                    visited.add(url)
+                    return await fetch_page(session, url)
             
-            self.results_accumulator.append({
-                "url": url,
-                "model_number": vib,
-                "availability": avail_text_copy
-            })
+            tasks = [worker(url) for url in current_batch]
+            results = await asyncio.gather(*tasks)
+            
+            # Process gathered page metrics
+            for res in results:
+                if not res:
+                    continue
+                url, html_content = res
+                if not html_content:
+                    continue
+                
+                # Check for catalog routing segments
+                if "/product/" in url.lower() or "/mkt-product/" in url.lower():
+                    discovered_products.add(url)
+                
+                # Extract structural href paths recursively using fast string matches
+                links = re.findall(r'href=["\'](https?://[^"\']+|/[^"\']*)["\']', html_content)
+                for link in links:
+                    if link.startswith("/"):
+                        link = urljoin(url, link)
+                    
+                    p_link = urlparse(link)
+                    if p_link.netloc == allowed_domain and link not in visited and link not in to_visit:
+                        # Focus tracking loops explicitly on your catalog paths
+                        if f"/{base_lang}/" in link.lower() and not any(ext in p_link.path.lower() for ext in ['.pdf', '.jpg', '.png', '.css', '.js']):
+                            to_visit.add(link)
+            
+            # Dynamic interface diagnostics reporting panel
+            status_text.markdown(f"**Pages Scanned:** `{len(visited)}` | **Discovered Real-time Storefront Items:** `{len(discovered_products)}`")
+            progress_container.progress(min(int((len(visited) / 300) * 100), 100))
+            
+    return discovered_products
 
-# -------------------------------------------------------------------------
-# ⚙️ CROCHET DECORATED CRAWL RUNNER (Blocks until Scrapy finishes)
-# -------------------------------------------------------------------------
-@crochet.wait_for(timeout=600.0) # Gives the spider a safe 10-minute maximum run window
-def run_spider_with_crochet(runner, spider_class, **kwargs):
-    """Leverages crochet to run Scrapy's async deferred engine inside the main thread."""
-    return runner.crawl(spider_class, **kwargs)
-
-def run_inline_crawler(sitemap_url, country, brand, product_urls, sm_vibs):
-    """Prepares project configurations and safely tracks execution data output blocks."""
-    scraped_items = []
-    
-    settings = get_project_settings()
-    settings.update({
-        'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'LOG_LEVEL': 'INFO',
-        'CONCURRENT_REQUESTS': 16,
-        'DOWNLOAD_DELAY': 0.1,
-        'COOKIES_ENABLED': False,
-        'TELNETCONSOLE_ENABLED': False
-    })
-    
-    runner = CrawlerRunner(settings)
-    
-    # Fire off the crawler thread and force the script to wait until it fully finishes scraping links
-    run_spider_with_crochet(
-        runner, 
-        BoschGrandMasterSplitAuditor,
-        sitemap_url=sitemap_url,
-        sitemap_urls_list=product_urls,
-        sitemap_vibs=sm_vibs,
-        country=country,
-        brand=brand,
-        results_accumulator=scraped_items
-    )
-    
-    # Save compiled delta elements down to database layers
-    today = datetime.now().strftime("%Y-%m-%d")
-    if scraped_items:
-        conn = sqlite3.connect("database.db")
-        conn.execute("PRAGMA journal_mode=WAL;")
-        cur = conn.cursor()
-        for item in scraped_items:
-            cur.execute("""
-                INSERT INTO product_snapshots (url, model_number, brand, country, status_code, snapshot_date, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (item["url"], item["model_number"], brand, country, 200, today, time.time()))
-        conn.commit()
-        conn.close()
-        
-    return scraped_items
-
-# -------------------------------------------------------------------------
-# 🖥️ STREAMLIT FRONTEND USER INTERFACE LAYER
-# -------------------------------------------------------------------------
 def render():
-    st.title("📦 Product Delta Tracker (Scrapy Engine)")
-    st.caption("High-performance auditing interface powered by Scrapy multi-threaded link crawlers.")
+    st.title("📦 Product Delta Tracker (Async Engine)")
+    st.caption("High-performance real-time catalog link crawler to discover updated variants without outdated sitemaps.")
 
     # --- CONFIGURATION BOX ---
     with st.container(border=True):
@@ -138,28 +113,54 @@ def render():
         if not sitemap_url or not country:
             st.error("Please fill in both the Sitemap URL Seed and Country Identifier.")
         else:
-            with st.status("🕷️ Scrapy Engine Crawling Domain...", expanded=True) as status:
-                st.write("Step 1: Parsing base sitemap links to build catalog targets...")
-                try:
-                    sm_df = adv.sitemap_to_df(sitemap_url)
-                    all_urls = sm_df['loc'].dropna().unique().tolist()
-                    product_urls = [u for u in all_urls if "/product/" in u or "/mkt-product/" in u]
-                    sm_vibs = {u.rstrip('/').split('/')[-1] for u in product_urls}
-                except Exception:
-                    product_urls = []
-                    sm_vibs = set()
+            progress_bar = st.progress(0, text="Initializing crawler context...")
+            status_text = st.empty()
+            
+            # Step 1: Backfill using sitemap rules matching your original approach
+            status_text.info("Step 1: Fetching reference sitemap catalog points...")
+            try:
+                sm_df = adv.sitemap_to_df(sitemap_url)
+                all_urls = sm_df['loc'].dropna().unique().tolist()
+                product_urls = [u for u in all_urls if "/product/" in u or "/mkt-product/" in u]
+            except Exception:
+                product_urls = []
                 
-                st.write("Step 2: Spawning recursive link discovery loop (This may take a minute)...")
-                payload = run_inline_crawler(sitemap_url, country, brand, product_urls, sm_vibs)
+            base_lang = "vi" if "/vi/" in sitemap_url else "en"
+            parsed_root = urlparse(sitemap_url)
+            start_url = f"{parsed_root.scheme}://{parsed_root.netloc}/{base_lang}/"
+            
+            # Step 2: Commencing safe internal deep loop traversal
+            status_text.info("Step 2: Spawning multi-threaded link validation spider...")
+            
+            # Safe event loop extraction targeting cloud worker architectures
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            product_links = loop.run_until_complete(
+                async_site_crawler(start_url, base_lang, product_urls, progress_bar, status_text)
+            )
+            loop.close()
+            
+            # Step 3: Map results to internal data targets
+            today = datetime.now().strftime("%Y-%m-%d")
+            if product_links:
+                conn = sqlite3.connect("database.db")
+                conn.execute("PRAGMA journal_mode=WAL;")
+                cur = conn.cursor()
+                for url in product_links:
+                    model_num = url.rstrip('/').split('/')[-1].split('?')[0]
+                    cur.execute("""
+                        INSERT INTO product_snapshots (url, model_number, brand, country, status_code, snapshot_date, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (url, model_num, brand, country, 200, today, time.time()))
+                conn.commit()
+                conn.close()
                 
-                if payload:
-                    status.update(label=f"✅ Successfully logged {len(payload)} storefront products!", state="complete")
-                    st.success("Database sync finalized! Page reloading...")
-                else:
-                    status.update(label="⚠️ Run finished, but no product URLs were discovered.", state="complete")
+                st.success(f"✅ Run complete! Successfully saved {len(product_links)} verified product variations down to database logs.")
+            else:
+                st.warning("Scan completed but no active structural catalog pathways matched current tracking filters.")
                 
-                time.sleep(1.5)
-                st.rerun()
+            time.sleep(1.5)
+            st.rerun()
 
     st.divider()
     
