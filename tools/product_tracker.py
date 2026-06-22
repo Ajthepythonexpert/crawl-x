@@ -40,18 +40,22 @@ def run_snapshot_crawler(sitemap_url, country, brand):
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (url, model_num, brand, country, 200, today, time.time()))
                 
-                results.append({"url": url, "model": model_num})
+                results.append({"URL": url, "Model Number": model_num})
                 
             conn.commit()
             conn.close()
-            return True, len(results)
+            return True, results
     except Exception as e:
         return False, str(e)
-    return True, 0
+    return True, []
 
 def render():
     st.title("📦 Product Delta Tracker")
     st.caption("Weekly defensive visibility system to detect unintended drop-offs from your regional storefront inventory.")
+
+    # Initialize a session state bucket to hold temporary download rows
+    if "last_crawl_results" not in st.session_state:
+        st.session_state.last_crawl_results = None
 
     # --- CONFIGURATION BOX ---
     with st.container(border=True):
@@ -70,15 +74,35 @@ def render():
             progress_bar = st.progress(0, text="Initializing inventory crawler...")
             
             progress_bar.progress(30, text="Fetching and parsing sitemap dataframe...")
-            success, count_or_error = run_snapshot_crawler(sitemap_url, country, brand)
+            success, data_payload = run_snapshot_crawler(sitemap_url, country, brand)
             
             if success:
                 progress_bar.progress(100, text="Done!")
-                st.success(f"✅ Snapshot complete! Successfully logged {count_or_error} products for {brand} ({country}).")
-                time.sleep(1)
-                st.rerun()
+                st.session_state.last_crawl_results = data_payload
+                st.success(f"✅ Snapshot complete! Successfully logged {len(data_payload)} products for {brand} ({country}).")
             else:
-                st.error(f"Snapshot run failed: {count_or_error}")
+                st.error(f"Snapshot run failed: {data_payload}")
+
+    # --- IMMEDIATE DATA EXTRACTION PANEL ---
+    if st.session_state.last_crawl_results:
+        with st.container(border=True):
+            st.markdown("### 📥 Current Active Run Backup")
+            st.markdown("Download the items found during this snapshot run immediately:")
+            
+            df_current = pd.DataFrame(st.session_state.last_crawl_results)
+            st.dataframe(df_current, use_container_width=True)
+            
+            # Setup immediate Excel file construction conversion
+            file_name = f"CURRENT_SNAPSHOT_{brand}_{country}_{datetime.now().strftime('%Y-%m-%d')}.xlsx"
+            df_current.to_excel(file_name, index=False)
+            with open(file_name, "rb") as f:
+                st.download_button(
+                    label="📥 Download Active Inventory List (Excel)",
+                    data=f,
+                    file_name=file_name,
+                    mime="application/vnd.ms-excel",
+                    use_container_width=True
+                )
 
     st.divider()
     
