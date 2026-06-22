@@ -1,31 +1,13 @@
-# -------------------------------------------------------------------------
-# CONTEXT MANAGER CHDIR RESOLUTION (Forces Module Resolution on Cloud)
-# -------------------------------------------------------------------------
-import os
-import sys
-
-# Track where Streamlit thinks it is running right now
-_original_pwd = os.getcwd()
-
-# Jump straight to the absolute project root folder
-_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-os.chdir(_project_root)
-
-# Force the root into sys.path explicitly for this thread context execution
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
-
-try:
-    # Now standard python imports are forced to find your root folders
-    from analytics.db import get_conn
-    from core.job_manager import start_job
-finally:
-    # Safely restore original working directory context so navigation doesn't snap
-    os.chdir(_original_pwd)
-# -------------------------------------------------------------------------
-
 import streamlit as st
 import pandas as pd
+import json
+import os
+import time
+from datetime import datetime
+import advertools as adv
+
+# Clean, standard root imports matching your architecture
+from db import get_conn
 
 # 📦 METADATA DECLARATION FOR THE DASHBOARD REGISTRY LOOP
 INFO = {
@@ -33,6 +15,7 @@ INFO = {
     "icon": "📦",
     "description": "Monitor vanished or newly introduced product variants week-over-week across markets."
 }
+
 def get_tracked_dates(country):
     """Fetches all unique historical snapshot dates available for a specific market."""
     conn = get_conn()
@@ -46,6 +29,39 @@ def get_tracked_dates(country):
         conn.close()
     return dates
 
+def run_snapshot_crawler(sitemap_url, country, brand):
+    """Executes the tracking scan directly inline matching your Keyword Finder style."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    results = []
+    
+    try:
+        df = adv.sitemap_to_df(sitemap_url)
+        if 'loc' in df.columns:
+            all_urls = df['loc'].dropna().unique().tolist()
+            
+            # Isolate targeted structural product storefront paths
+            product_urls = [u for u in all_urls if "/product/" in u.lower() or "/mkt-product/" in u.lower()]
+            
+            conn = get_conn()
+            cur = conn.cursor()
+            
+            for url in product_urls:
+                model_num = url.rstrip('/').split('/')[-1]
+                
+                cur.execute("""
+                    INSERT INTO product_snapshots (url, model_number, brand, country, status_code, snapshot_date, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (url, model_num, brand, country, 200, today, time.time()))
+                
+                results.append({"url": url, "model": model_num})
+                
+            conn.commit()
+            conn.close()
+            return True, len(results)
+    except Exception as e:
+        return False, str(e)
+    return True, 0
+
 def render():
     st.title("📦 Product Delta Tracker")
     st.caption("Weekly defensive visibility system to detect unintended drop-offs from your regional storefront inventory.")
@@ -55,23 +71,27 @@ def render():
         col1, col2 = st.columns(2)
         with col1:
             sitemap_url = st.text_input("Sitemap URL Seed", value="https://www.bosch-home.com/za/sitemap.xml")
-            # Using session state key tracking to handle dynamic lookups gracefully
-            country = st.text_input("Country Identifier (e.g., ZA, SG, UA)", value="ZA", key="prod_country_input").upper().strip()
+            country = st.text_input("Country Identifier (e.g., ZA, SG, UA)", value="ZA").upper().strip()
         with col2:
             brand = st.selectbox("Target Brand", ["BOSCH", "SIEMENS", "NEFF"])
 
-    # --- TRIGGER NEW CRAWL JOB ---
+    # --- TRIGGER CRAWL ---
     if st.button("🚀 INITIATE CURRENT WEEKLY INVENTORY SNAPSHOT", use_container_width=True):
         if not sitemap_url or not country:
             st.error("Please provide both a valid Sitemap URL and Country Identifier.")
         else:
-            params = {
-                "sitemap_url": sitemap_url, 
-                "country": country, 
-                "brand": brand
-            }
-            job_id = start_job(st.session_state.get("user_id", "Admin"), "product_tracker", params)
-            st.success(f"Snapshot tracking run assigned to execution thread! Task ID: {job_id}")
+            progress_bar = st.progress(0, text="Initializing inventory crawler...")
+            
+            progress_bar.progress(30, text="Fetching and parsing sitemap dataframe...")
+            success, count_or_error = run_snapshot_crawler(sitemap_url, country, brand)
+            
+            if success:
+                progress_bar.progress(100, text="Done!")
+                st.success(f"✅ Snapshot complete! Successfully logged {count_or_error} products for {brand} ({country}).")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error(f"Snapshot run failed: {count_or_error}")
 
     st.divider()
     
@@ -97,7 +117,6 @@ def render():
             set_new = set(df_new['url'].tolist())
             set_old = set(df_old['url'].tolist())
 
-            # Math sets difference rules for finding deltas
             dropped_urls = set_old - set_new
             added_urls = set_new - set_old
 
@@ -111,7 +130,6 @@ def render():
                     st.warning(f"Alert! {len(df_dropped)} products disappeared from the sitemap this week.")
                     st.dataframe(df_dropped, use_container_width=True)
                     
-                    # Generation of instant excel file trace sheet download
                     report_title = f"VANISHED_PRODUCTS_{country}_{curr_week}.xlsx"
                     df_dropped.to_excel(report_title, index=False)
                     with open(report_title, "rb") as file_bytes:
