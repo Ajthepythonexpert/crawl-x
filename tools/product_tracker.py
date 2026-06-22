@@ -9,9 +9,13 @@ from urllib.parse import urlparse
 import scrapy
 from scrapy.spiders import CrawlSpider, Rule
 from scrapy.linkextractors import LinkExtractor
-from scrapy.crawler import Crawler
+from scrapy.crawler import CrawlerRunner
 from scrapy.utils.project import get_project_settings
 import advertools as adv
+
+# Initialize crochet safely at the module level before any execution loops trigger
+import crochet
+crochet.setup()
 
 # 📦 METADATA DECLARATION FOR THE DASHBOARD REGISTRY LOOP
 INFO = {
@@ -21,7 +25,7 @@ INFO = {
 }
 
 # -------------------------------------------------------------------------
-# 🕷️ YOUR WORKING SCRAPY SPIDER (Optimized for Streamlit Memory Structuring)
+# 🕷️ YOUR EXACT WORKING CRAWL SPIDER
 # -------------------------------------------------------------------------
 class BoschGrandMasterSplitAuditor(CrawlSpider):
     name = 'bosch_split_auditor'
@@ -55,7 +59,6 @@ class BoschGrandMasterSplitAuditor(CrawlSpider):
             avail_text = response.xpath('//*[@data-testid="availability-text-with-link-text"]/text()').get()
             avail_text_copy = avail_text.strip() if avail_text else "In Stock"
             
-            # Record item instantly to reference arrays
             self.results_accumulator.append({
                 "url": url,
                 "model_number": vib,
@@ -63,10 +66,15 @@ class BoschGrandMasterSplitAuditor(CrawlSpider):
             })
 
 # -------------------------------------------------------------------------
-# ⚙️ INLINE CRAWL EXECUTION WRAPPER (Cloud Environment Compliant)
+# ⚙️ CROCHET DECORATED CRAWL RUNNER (Blocks until Scrapy finishes)
 # -------------------------------------------------------------------------
+@crochet.wait_for(timeout=600.0) # Gives the spider a safe 10-minute maximum run window
+def run_spider_with_crochet(runner, spider_class, **kwargs):
+    """Leverages crochet to run Scrapy's async deferred engine inside the main thread."""
+    return runner.crawl(spider_class, **kwargs)
+
 def run_inline_crawler(sitemap_url, country, brand, product_urls, sm_vibs):
-    """Executes the Scrapy spider asynchronously inside the primary engine thread context."""
+    """Prepares project configurations and safely tracks execution data output blocks."""
     scraped_items = []
     
     settings = get_project_settings()
@@ -79,11 +87,12 @@ def run_inline_crawler(sitemap_url, country, brand, product_urls, sm_vibs):
         'TELNETCONSOLE_ENABLED': False
     })
     
-    # Initialize the Scrapy crawler engine instance directly
-    crawler = Crawler(BoschGrandMasterSplitAuditor, settings)
+    runner = CrawlerRunner(settings)
     
-    # Instantiate your custom parameters directly into the compilation engine
-    spider = BoschGrandMasterSplitAuditor(
+    # Fire off the crawler thread and force the script to wait until it fully finishes scraping links
+    run_spider_with_crochet(
+        runner, 
+        BoschGrandMasterSplitAuditor,
         sitemap_url=sitemap_url,
         sitemap_urls_list=product_urls,
         sitemap_vibs=sm_vibs,
@@ -92,10 +101,7 @@ def run_inline_crawler(sitemap_url, country, brand, product_urls, sm_vibs):
         results_accumulator=scraped_items
     )
     
-    # Run the internal crawling pipeline loop synchronously inside this scope block
-    crawler.crawl(spider)
-    
-    # Write the results down into your central database framework directly
+    # Save compiled delta elements down to database layers
     today = datetime.now().strftime("%Y-%m-%d")
     if scraped_items:
         conn = sqlite3.connect("database.db")
@@ -115,7 +121,7 @@ def run_inline_crawler(sitemap_url, country, brand, product_urls, sm_vibs):
 # 🖥️ STREAMLIT FRONTEND USER INTERFACE LAYER
 # -------------------------------------------------------------------------
 def render():
-    st.title("📦 Product Delta Tracker (Scrapy Async Engine)")
+    st.title("📦 Product Delta Tracker (Scrapy Engine)")
     st.caption("High-performance auditing interface powered by Scrapy multi-threaded link crawlers.")
 
     # --- CONFIGURATION BOX ---
@@ -132,8 +138,8 @@ def render():
         if not sitemap_url or not country:
             st.error("Please fill in both the Sitemap URL Seed and Country Identifier.")
         else:
-            with st.status("🕷️ Scrapy Engine Deploying...", expanded=True) as status:
-                st.write("Step 1: Reading base XML records to backfill reference catalog sets...")
+            with st.status("🕷️ Scrapy Engine Crawling Domain...", expanded=True) as status:
+                st.write("Step 1: Parsing base sitemap links to build catalog targets...")
                 try:
                     sm_df = adv.sitemap_to_df(sitemap_url)
                     all_urls = sm_df['loc'].dropna().unique().tolist()
@@ -143,12 +149,16 @@ def render():
                     product_urls = []
                     sm_vibs = set()
                 
-                st.write(f"Step 2: Commencing safe async link discovery crawler on core system domain...")
+                st.write("Step 2: Spawning recursive link discovery loop (This may take a minute)...")
                 payload = run_inline_crawler(sitemap_url, country, brand, product_urls, sm_vibs)
                 
-                status.update(label="✅ Inventory Run Finalized successfully!", state="complete")
-                st.success(f"Successfully tracked and evaluated live pages! Refreshing data arrays...")
-                time.sleep(1)
+                if payload:
+                    status.update(label=f"✅ Successfully logged {len(payload)} storefront products!", state="complete")
+                    st.success("Database sync finalized! Page reloading...")
+                else:
+                    status.update(label="⚠️ Run finished, but no product URLs were discovered.", state="complete")
+                
+                time.sleep(1.5)
                 st.rerun()
 
     st.divider()
