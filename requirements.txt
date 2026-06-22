@@ -11,3 +11,4 @@ advertools
 openpyxl
 PyMuPDF
 pillow
+aiohttp>=3.10.0
