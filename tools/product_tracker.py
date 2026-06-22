@@ -2,152 +2,164 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import time
-import re
+import os
+import json
+import html
 from datetime import datetime
 from urllib.parse import urlparse
-import requests
+
+# Scrapy Core Engine Imports
+import scrapy
+from scrapy.spiders import CrawlSpider, Rule
+from scrapy.linkextractors import LinkExtractor
+from scrapy.crawler import CrawlerRunner
+from billiard.process import Process  # Safe multiprocessing alternative for web servers
+from twisted.internet import reactor
+import advertools as adv
 
 # 📦 METADATA DECLARATION FOR THE DASHBOARD REGISTRY LOOP
 INFO = {
     "title": "Product Delta Tracker",
     "icon": "📦",
-    "description": "Monitor vanished or newly introduced product variants week-over-week by executing a live full-site link crawl."
+    "description": "High-performance asynchronous Scrapy spider to discover inventory discrepancies across markets."
 }
 
-def deep_crawl_site(start_url, country, brand, progress_bar, status_text):
-    """
-    Executes an inline full-site discovery crawl. 
-    Traverses internal anchor links to mimic your stockfinderv2.py spider logic.
-    """
-    today = datetime.now().strftime("%Y-%m-%d")
-    parsed_start = urlparse(start_url)
-    allowed_domain = parsed_start.netloc
-    
-    # Initialize crawl balance maps
-    urls_to_crawl = [start_url]
-    visited_urls = set()
-    product_urls = set()
-    
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    })
-    
-    # Cap limit to keep the browser execution thread safe on Streamlit Cloud (Adjustable)
-    MAX_PAGES_TO_SCAN = 1200 
-    
-    while urls_to_crawl and len(visited_urls) < MAX_PAGES_TO_SCAN:
-        current_url = urls_to_crawl.pop(0)
+# -------------------------------------------------------------------------
+# 🕷️ YOUR EXACT WORKING SCRAPY SPIDER INTEGRATED NATIVELY
+# -------------------------------------------------------------------------
+class BoschGrandMasterSplitAuditor(CrawlSpider):
+    name = 'bosch_split_auditor'
+
+    def __init__(self, sitemap_url=None, sitemap_urls_list=None, sitemap_vibs=None, country="ZA", brand="BOSCH", *args, **kwargs):
+        super(BoschGrandMasterSplitAuditor, self).__init__(*args, **kwargs)
+        self.sitemap_url = sitemap_url
+        parsed = urlparse(sitemap_url)
+        self.domain = parsed.netloc
+        self.country = country
+        self.brand = brand
+        self.lang = "vi" if "/vi/" in sitemap_url else "en"
+        self.allowed_domains = [self.domain]
         
-        if current_url in visited_urls:
-            continue
-            
-        visited_urls.add(current_url)
-        status_text.text(f"🔍 Visited: {len(visited_urls)} pages | Discovered Storefront Products: {len(product_urls)}")
+        # Start at the root language page
+        self.start_urls = [f"{parsed.scheme}://{self.domain}/{self.lang}/"]
+        if sitemap_urls_list:
+            self.start_urls.extend(sitemap_urls_list)
         
-        # Update progress bar occasionally based on scanned segments
-        progress_val = min(int((len(visited_urls) / 200) * 100), 95)
-        progress_bar.progress(progress_val)
+        self.rules = (
+            Rule(LinkExtractor(allow=f"/{self.lang}/"), callback='parse_item', follow=True),
+        )
+        self._compile_rules()
         
-        try:
-            r = session.get(current_url, timeout=15, allow_redirects=True)
-            if r.status_code != 200:
-                continue
-                
-            # 1. Inspect URL for structural product identifier variants
-            if "/product/" in current_url.lower() or "/mkt-product/" in current_url.lower():
-                product_urls.add(current_url)
-                
-            # 2. Extract every internal anchor href attribute from the live html markup
-            all_links = re.findall(r'href=["\'](https?://[^"\']+|/[^"\']*)["\']', r.text)
+        self.crawled_data = {}  
+        self.sitemap_vibs = sitemap_vibs if sitemap_vibs else set()
+
+    def parse_item(self, response):
+        url = response.url
+        if "/product/" in url or "/mkt-product/" in url:
+            vib = url.rstrip('/').split('/')[-1].split('?')[0]
             
-            for link in all_links:
-                # Resolve relative pathways cleanly
-                if link.startswith("/"):
-                    link = f"{parsed_start.scheme}://{allowed_domain}{link}"
-                
-                parsed_link = urlparse(link)
-                # Keep crawler strictly isolated to your targeted regional brand workspace
-                if parsed_link.netloc == allowed_domain and link not in visited_urls and link not in urls_to_crawl:
-                    # Filter string pathways to prioritize clean catalog content indexing
-                    if not any(ext in parsed_link.path.lower() for ext in ['.pdf', '.jpg', '.png', '.zip', '.css', '.js']):
-                        urls_to_crawl.append(link)
-                        
-        except Exception:
-            continue
+            # Extract basic availability text to track stock baseline variations
+            avail_text = response.xpath('//*[@data-testid="availability-text-with-link-text"]/text()').get()
+            avail_text_copy = avail_text.strip() if avail_text else "In Stock"
             
-    # --- SAVE DISCOVERED STOCK MATRIX ---
-    results = []
-    if product_urls:
+            self.crawled_data[vib] = {
+                'URL': url,
+                'Model Number': vib,
+                'Availability': avail_text_copy
+            }
+
+    def closed(self, reason):
+        """Saves scraped inventory rows down to your shared database.db setup."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        all_unique_vibs = set(self.crawled_data.keys()).union(self.sitemap_vibs)
+        
+        if not all_unique_vibs:
+            return
+
         conn = sqlite3.connect("database.db")
         conn.execute("PRAGMA journal_mode=WAL;")
         cur = conn.cursor()
         
-        for url in product_urls:
-            # Clean split to pull model variants out of tail ends
-            model_num = url.rstrip('/').split('/')[-1].split('?')[0]
+        for vib in all_unique_vibs:
+            data = self.crawled_data.get(vib, {})
+            url = data.get('URL', f"https://{self.domain}/{self.lang}/product/{vib}")
             
             cur.execute("""
                 INSERT INTO product_snapshots (url, model_number, brand, country, status_code, snapshot_date, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (url, model_num, brand, country, 200, today, time.time()))
-            
-            results.append({"URL": url, "Model Number": model_num})
+            """, (url, vib, self.brand, self.country, 200, today, time.time()))
             
         conn.commit()
         conn.close()
-        
-    return results
 
+# -------------------------------------------------------------------------
+# ⚙️ MULTIPROCESSING RUNNER CONTEXT (Prevents Twisted Reactor Framework Collision)
+# -------------------------------------------------------------------------
+def run_spider_process(sitemap_url, country, brand, product_urls, sm_vibs):
+    """Safely initializes the Scrapy engine in an isolated process block."""
+    def crawler_thread():
+        runner = CrawlerRunner(settings={
+            'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'LOG_LEVEL': 'INFO',
+            'RETRY_TIMES': 3,
+            'DOWNLOAD_TIMEOUT': 20,
+            'CONCURRENT_REQUESTS': 16,
+            'REDIRECT_ENABLED': True,
+            'HTTPERROR_ALLOW_ALL': True,
+            'DOWNLOAD_DELAY': 0.1
+        })
+        d = runner.crawl(BoschGrandMasterSplitAuditor, 
+                         sitemap_url=sitemap_url, 
+                         sitemap_urls_list=product_urls, 
+                         sitemap_vibs=sm_vibs,
+                         country=country,
+                         brand=brand)
+        d.addBoth(lambda _: reactor.stop())
+        reactor.run()
+
+    p = Process(target=crawler_thread)
+    p.start()
+    p.join()  # Blocks control wrapper cleanly until Scrapy completes execution
+
+# -------------------------------------------------------------------------
+# 🖥️ STREAMLIT FRONTEND USER INTERFACE LAYER
+# -------------------------------------------------------------------------
 def render():
-    st.title("📦 Product Live Crawl Tracker")
-    st.caption("Deep crawler that navigates from the home entry point across all nested layers to discover newly published variants.")
-
-    if "last_crawl_results" not in st.session_state:
-        st.session_state.last_crawl_results = None
+    st.title("📦 Product Delta Tracker (Scrapy Async Engine)")
+    st.caption("High-performance auditing interface powered by Scrapy multi-threaded link crawlers.")
 
     # --- CONFIGURATION BOX ---
     with st.container(border=True):
         col1, col2 = st.columns(2)
         with col1:
-            start_url = st.text_input("Homepage Entry Point URL", value="https://www.bosch-home.com/za/")
+            sitemap_url = st.text_input("Sitemap XML URL Seed", value="https://www.bosch-home.com/za/sitemap.xml")
             country = st.text_input("Country Identifier (e.g., ZA, SG, UA)", value="ZA").upper().strip()
         with col2:
             brand = st.selectbox("Target Brand", ["BOSCH", "SIEMENS", "NEFF"])
 
-    # --- TRIGGER RUN ---
-    if st.button("🚀 INITIATE DEEP FULL-SITE DISCOVERY CRAWL", use_container_width=True):
-        if not start_url or not country:
-            st.error("Please provide both a valid Home Start URL and Country Identifier.")
+    # --- TRIGGER CRAWL ---
+    if st.button("🚀 INITIATE CURRENT WEEKLY INVENTORY SNAPSHOT", use_container_width=True):
+        if not sitemap_url or not country:
+            st.error("Please fill in both the Sitemap URL Seed and Country Identifier.")
         else:
-            progress_bar = st.progress(0, text="Deploying custom discovery bots...")
-            status_text = st.empty()
-            
-            data_payload = deep_crawl_site(start_url, country, brand, progress_bar, status_text)
-            
-            progress_bar.progress(100)
-            status_text.empty()
-            
-            st.session_state.last_crawl_results = data_payload
-            st.success(f"✅ Deep discovery loop finalized! Successfully scraped and cataloged {len(data_payload)} live storefront items.")
-
-    # --- IMMEDIATE EXCEL DOWNLOAD SHEET BAR ---
-    if st.session_state.last_crawl_results:
-        with st.container(border=True):
-            st.markdown("### 📥 Discovered Active Inventory Results")
-            df_current = pd.DataFrame(st.session_state.last_crawl_results)
-            st.dataframe(df_current, use_container_width=True)
-            
-            file_name = f"DEEP_CRAWL_INVENTORY_{brand}_{country}_{datetime.now().strftime('%Y-%m-%d')}.xlsx"
-            df_current.to_excel(file_name, index=False)
-            with open(file_name, "rb") as f:
-                st.download_button(
-                    label="📥 Download Discovered Models List (Excel)",
-                    data=f,
-                    file_name=file_name,
-                    mime="application/vnd.ms-excel",
-                    use_container_width=True
-                )
+            with st.status("🕷️ Scrapy Engine Deploying...", expanded=True) as status:
+                st.write("Step 1: Reading base XML records to backfill reference catalog sets...")
+                try:
+                    sm_df = adv.sitemap_to_df(sitemap_url)
+                    all_urls = sm_df['loc'].dropna().unique().tolist()
+                    product_urls = [u for u in all_urls if "/product/" in u or "/mkt-product/" in u]
+                    sm_vibs = {u.rstrip('/').split('/')[-1] for u in product_urls}
+                except Exception:
+                    product_urls = []
+                    sm_vibs = set()
+                
+                st.write(f"Step 2: Spawning multi-threaded scraper process to spider domain links...")
+                run_spider_process(sitemap_url, country, brand, product_urls, sm_vibs)
+                
+                status.update(label="✅ Inventory Run Finalized successfully!", state="complete")
+                st.success("Database logs updated! Refreshing view matrices...")
+                time.sleep(1)
+                st.rerun()
 
     st.divider()
     
@@ -190,7 +202,7 @@ def render():
             
             with t1:
                 if not df_dropped.empty:
-                    st.warning(f"Alert! {len(df_dropped)} products disappeared from the storefront map.")
+                    st.warning(f"Alert! {len(df_dropped)} products disappeared from the storefront maps.")
                     st.dataframe(df_dropped, use_container_width=True)
                     
                     report_title = f"VANISHED_PRODUCTS_{country}_{curr_week}.xlsx"
