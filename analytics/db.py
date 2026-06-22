@@ -53,6 +53,26 @@ def init_db():
     )
     """)
 
+    # 📦 PRODUCT SNAPSHOTS TABLE (New Module Dependency)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS product_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        url TEXT,
+        model_number TEXT,
+        brand TEXT,
+        country TEXT,
+        status_code INTEGER,
+        snapshot_date TEXT, -- Stored as format YYYY-MM-DD for clean matching queries
+        created_at REAL
+    )
+    """)
+
+    # ⚡ SPEED OPTIMIZATION INDEX
+    cur.execute("""
+    CREATE INDEX IF NOT EXISTS idx_product_snapshots_lookup 
+    ON product_snapshots (country, snapshot_date);
+    """)
+
     conn.commit()
     conn.close()
 
