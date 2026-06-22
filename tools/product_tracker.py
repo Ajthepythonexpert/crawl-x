@@ -5,6 +5,25 @@ import os
 import time
 from datetime import datetime
 import advertools as adv
+import sys
+import os
+
+# -------------------------------------------------------------------------
+# DYNAMIC ROOT DB RESOLUTION
+# -------------------------------------------------------------------------
+try:
+    # Try the standard root import first
+    from db import get_conn
+except ModuleNotFoundError:
+    # If Streamlit is isolating the subfolder, pull the parent folder into the path dynamically
+    _current_dir = os.path.dirname(os.path.abspath(__file__))
+    _project_root = os.path.abspath(os.path.join(_current_dir, ".."))
+    
+    if _project_root not in sys.path:
+        sys.path.insert(0, _project_root)
+        
+    from db import get_conn
+# -------------------------------------------------------------------------
 
 # Clean, standard root imports matching your architecture
 from db import get_conn
