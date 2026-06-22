@@ -1,22 +1,7 @@
-# -------------------------------------------------------------------------
-# START OF ROBUST RUNTIME ENVIRONMENT PATH RESOLUTION
-# -------------------------------------------------------------------------
-import sys
-import os
-
-# Grab the directory of the current file (tools/) and go up one level to the project root
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, ".."))
-
-# Inject the project root at the very front of Python's search paths if it isn't there
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-# -------------------------------------------------------------------------
-
 import streamlit as st
 import pandas as pd
 
-# Standard imports will now resolve cleanly on both local Windows and Streamlit Cloud
+# Clean, standard imports (Now globally resolved by app.py)
 from analytics.db import get_conn
 from core.job_manager import start_job
 
