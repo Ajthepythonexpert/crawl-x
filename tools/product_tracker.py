@@ -17,9 +17,11 @@ INFO = {
 }
 
 async def fetch_page(session, url):
-    """Safely handles non-blocking async network resource grabs."""
+    """Safely handles non-blocking async network resource grabs with cache-busting headers."""
     try:
-        async with session.get(url, timeout=15, allow_redirects=True) as response:
+        # Force the target server to return fresh content instead of cached edge data
+        headers = {"Cache-Control": "no-cache", "Pragma": "no-cache"}
+        async with session.get(url, timeout=12, allow_redirects=True, headers=headers) as response:
             if response.status == 200:
                 text = await response.text()
                 return url, text
@@ -32,22 +34,20 @@ async def async_site_crawler(start_url, base_lang, product_urls, progress_contai
     parsed_start = urlparse(start_url)
     allowed_domain = parsed_start.netloc
     
-    # Initialize lookup queues
+    # Initialize lookup queues cleanly
     to_visit = set([f"{parsed_start.scheme}://{allowed_domain}/{base_lang}/"])
     to_visit.update(product_urls)
     
     visited = set()
     discovered_products = set()
     
-    # Performance tuning array matching your 16 concurrent connection benchmark
     CONCURRENT_LIMIT = 16
     sem = asyncio.Semaphore(CONCURRENT_LIMIT)
     
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     }
     
-    # Set a protective iteration boundary to prevent cloud worker runtime stalls
     MAX_TOTAL_PAGES = 1500
     
     async with aiohttp.ClientSession(headers=headers) as session:
@@ -65,7 +65,6 @@ async def async_site_crawler(start_url, base_lang, product_urls, progress_contai
             tasks = [worker(url) for url in current_batch]
             results = await asyncio.gather(*tasks)
             
-            # Process gathered page metrics
             for res in results:
                 if not res:
                     continue
@@ -73,11 +72,10 @@ async def async_site_crawler(start_url, base_lang, product_urls, progress_contai
                 if not html_content:
                     continue
                 
-                # Check for catalog routing segments
                 if "/product/" in url.lower() or "/mkt-product/" in url.lower():
                     discovered_products.add(url)
                 
-                # Extract structural href paths recursively using fast string matches
+                # Dynamic page-from-page link extraction
                 links = re.findall(r'href=["\'](https?://[^"\']+|/[^"\']*)["\']', html_content)
                 for link in links:
                     if link.startswith("/"):
@@ -85,19 +83,24 @@ async def async_site_crawler(start_url, base_lang, product_urls, progress_contai
                     
                     p_link = urlparse(link)
                     if p_link.netloc == allowed_domain and link not in visited and link not in to_visit:
-                        # Focus tracking loops explicitly on your catalog paths
-                        if f"/{base_lang}/" in link.lower() and not any(ext in p_link.path.lower() for ext in ['.pdf', '.jpg', '.png', '.css', '.js']):
+                        if f"/{base_lang}/" in link.lower() and not any(ext in p_link.path.lower() for ext in ['.pdf', '.jpg', '.png', '.css', '.js', '.zip']):
                             to_visit.add(link)
             
-            # Dynamic interface diagnostics reporting panel
-            status_text.markdown(f"**Pages Scanned:** `{len(visited)}` | **Discovered Real-time Storefront Items:** `{len(discovered_products)}`")
-            progress_container.progress(min(int((len(visited) / 300) * 100), 100))
+            # Real-time UI diagnostics reporting panel
+            status_text.markdown(f"⏳ **Live Network Sync Running...** | Pages Scanned: `{len(visited)}` | Discovered Storefront Items: `{len(discovered_products)}`")
+            progress_container.progress(min(int((len(visited) / 500) * 100), 100))
             
-    return discovered_products
+    return list(discovered_products)
 
 def render():
     st.title("📦 Product Delta Tracker (Async Engine)")
     st.caption("High-performance real-time catalog link crawler to discover updated variants without outdated sitemaps.")
+
+    # Persistent session state keys to store raw results data safely across reloads
+    if "current_run_data" not in st.session_state:
+        st.session_state.current_run_data = None
+    if "run_summary_text" not in st.session_state:
+        st.session_state.run_summary_text = ""
 
     # --- CONFIGURATION BOX ---
     with st.container(border=True):
@@ -113,13 +116,18 @@ def render():
         if not sitemap_url or not country:
             st.error("Please fill in both the Sitemap URL Seed and Country Identifier.")
         else:
+            # Clear previous run views on new button trigger click
+            st.session_state.current_run_data = None
+            st.session_state.run_summary_text = ""
+            
             progress_bar = st.progress(0, text="Initializing crawler context...")
             status_text = st.empty()
             
-            # Step 1: Backfill using sitemap rules matching your original approach
-            status_text.info("Step 1: Fetching reference sitemap catalog points...")
+            status_text.info("Step 1: Reading configuration sitemap catalog arrays...")
             try:
-                sm_df = adv.sitemap_to_df(sitemap_url)
+                # Append a live timestamp string to bypass sitemap file CDN caches completely
+                cache_buster_sitemap = f"{sitemap_url}?t={int(time.time())}"
+                sm_df = adv.sitemap_to_df(cache_buster_sitemap)
                 all_urls = sm_df['loc'].dropna().unique().tolist()
                 product_urls = [u for u in all_urls if "/product/" in u or "/mkt-product/" in u]
             except Exception:
@@ -129,10 +137,9 @@ def render():
             parsed_root = urlparse(sitemap_url)
             start_url = f"{parsed_root.scheme}://{parsed_root.netloc}/{base_lang}/"
             
-            # Step 2: Commencing safe internal deep loop traversal
-            status_text.info("Step 2: Spawning multi-threaded link validation spider...")
+            status_text.info("Step 2: Spawning deep recursive web link validation loop...")
             
-            # Safe event loop extraction targeting cloud worker architectures
+            # Explicit cleanly isolated event loop instance initialization
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             product_links = loop.run_until_complete(
@@ -140,8 +147,10 @@ def render():
             )
             loop.close()
             
-            # Step 3: Map results to internal data targets
+            # Step 3: Parse and save elements to SQLite layers
             today = datetime.now().strftime("%Y-%m-%d")
+            compiled_payload = []
+            
             if product_links:
                 conn = sqlite3.connect("database.db")
                 conn.execute("PRAGMA journal_mode=WAL;")
@@ -152,15 +161,36 @@ def render():
                         INSERT INTO product_snapshots (url, model_number, brand, country, status_code, snapshot_date, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, (url, model_num, brand, country, 200, today, time.time()))
+                    compiled_payload.append({"Verified URL": url, "Model ID": model_num, "Crawl Date": today})
                 conn.commit()
                 conn.close()
                 
-                st.success(f"✅ Run complete! Successfully saved {len(product_links)} verified product variations down to database logs.")
+                # Save data objects to session states so they stay visible
+                st.session_state.current_run_data = compiled_payload
+                st.session_state.run_summary_text = f"✅ Success! Deep live-crawl discovered and logged {len(product_links)} products."
+                progress_bar.progress(100)
+                status_text.empty()
             else:
-                st.warning("Scan completed but no active structural catalog pathways matched current tracking filters.")
-                
-            time.sleep(1.5)
-            st.rerun()
+                st.warning("Scan completed but no active catalog pathways matched. Target server may have blocked the sync.")
+
+    # --- RENDER IMMEDATE RUN RECOVERY FILE DOWNLOAD PANEL ---
+    if st.session_state.current_run_data:
+        st.success(st.session_state.run_summary_text)
+        with st.container(border=True):
+            st.markdown("### 📥 Active Extraction Output Sheets")
+            df_active_run = pd.DataFrame(st.session_state.current_run_data)
+            st.dataframe(df_active_run, use_container_width=True)
+            
+            xlsx_filename = f"LIVE_CRAWL_EXTRACTED_{brand}_{country}_{datetime.now().strftime('%Y-%m-%d')}.xlsx"
+            df_active_run.to_excel(xlsx_filename, index=False)
+            with open(xlsx_filename, "rb") as f:
+                st.download_button(
+                    label="⬇️ Download Verified Models Audit Spreadsheet (Excel)",
+                    data=f,
+                    file_name=xlsx_filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
 
     st.divider()
     
