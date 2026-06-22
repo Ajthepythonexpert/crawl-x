@@ -1,11 +1,20 @@
 # -------------------------------------------------------------------------
-# START OF CLOUD PATH ENVIRONMENT FIX
+# BULLETPROOF CLOUD PATH ENVIRONMENT FIX
 # -------------------------------------------------------------------------
 import sys
 import os
 
-# Append the parent directory to sys.path so Streamlit Cloud can resolve 'core' and 'analytics'
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Get the absolute root working directory of the project
+root_path = os.getcwd()
+
+# Force insert the root directory at index 0 so it takes absolute priority
+if root_path not in sys.path:
+    sys.path.insert(0, root_path)
+    
+# Secondary fallback based on file location
+parent_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_path not in sys.path:
+    sys.path.insert(0, parent_path)
 # -------------------------------------------------------------------------
 
 import streamlit as st
