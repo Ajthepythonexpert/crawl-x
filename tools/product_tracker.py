@@ -1,32 +1,10 @@
 import streamlit as st
 import pandas as pd
 import json
-import os
 import time
 from datetime import datetime
 import advertools as adv
-import sys
-import os
-
-# -------------------------------------------------------------------------
-# DYNAMIC ROOT DB RESOLUTION
-# -------------------------------------------------------------------------
-try:
-    # Try the standard root import first
-    from db import get_conn
-except ModuleNotFoundError:
-    # If Streamlit is isolating the subfolder, pull the parent folder into the path dynamically
-    _current_dir = os.path.dirname(os.path.abspath(__file__))
-    _project_root = os.path.abspath(os.path.join(_current_dir, ".."))
-    
-    if _project_root not in sys.path:
-        sys.path.insert(0, _project_root)
-        
-    from db import get_conn
-# -------------------------------------------------------------------------
-
-# Clean, standard root imports matching your architecture
-from db import get_conn
+import sqlite3
 
 # 📦 METADATA DECLARATION FOR THE DASHBOARD REGISTRY LOOP
 INFO = {
@@ -35,21 +13,8 @@ INFO = {
     "description": "Monitor vanished or newly introduced product variants week-over-week across markets."
 }
 
-def get_tracked_dates(country):
-    """Fetches all unique historical snapshot dates available for a specific market."""
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT DISTINCT snapshot_date FROM product_snapshots WHERE country=? ORDER BY snapshot_date DESC", (country,))
-        dates = [row[0] for row in cur.fetchall()]
-    except Exception:
-        dates = []
-    finally:
-        conn.close()
-    return dates
-
 def run_snapshot_crawler(sitemap_url, country, brand):
-    """Executes the tracking scan directly inline matching your Keyword Finder style."""
+    """Executes the tracking scan directly inline matching your core platform style."""
     today = datetime.now().strftime("%Y-%m-%d")
     results = []
     
@@ -61,7 +26,9 @@ def run_snapshot_crawler(sitemap_url, country, brand):
             # Isolate targeted structural product storefront paths
             product_urls = [u for u in all_urls if "/product/" in u.lower() or "/mkt-product/" in u.lower()]
             
-            conn = get_conn()
+            # Direct database fallback link bypassing global file dependencies
+            conn = sqlite3.connect("database.db")
+            conn.execute("PRAGMA journal_mode=WAL;")
             cur = conn.cursor()
             
             for url in product_urls:
@@ -118,7 +85,15 @@ def render():
     st.subheader("📊 Comparative Inventory Variance Engine")
     st.markdown("Select two distinct snapshot dates to inspect items that have been dropped or newly introduced.")
     
-    dates = get_tracked_dates(country)
+    # Inline localized database fetch loop
+    try:
+        conn = sqlite3.connect("database.db")
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT snapshot_date FROM product_snapshots WHERE country=? ORDER BY snapshot_date DESC", (country,))
+        dates = [row[0] for row in cur.fetchall()]
+        conn.close()
+    except Exception:
+        dates = []
 
     if len(dates) >= 2:
         c1, c2 = st.columns(2)
@@ -128,7 +103,7 @@ def render():
             prev_week = st.selectbox("Comparison Target Run Date (Older)", dates, index=1)
 
         if st.button("⚖️ CALCULATE DELTA HISTORICAL VARIANCE", use_container_width=True):
-            conn = get_conn()
+            conn = sqlite3.connect("database.db")
             df_new = pd.read_sql(f"SELECT url, model_number FROM product_snapshots WHERE snapshot_date='{curr_week}' AND country='{country}'", conn)
             df_old = pd.read_sql(f"SELECT url, model_number FROM product_snapshots WHERE snapshot_date='{prev_week}' AND country='{country}'", conn)
             conn.close()
@@ -160,7 +135,3 @@ def render():
                 if not df_added.empty:
                     st.info(f"Detected {len(df_added)} newly registered product configurations.")
                     st.dataframe(df_added, use_container_width=True)
-                else:
-                    st.write("No newly registered listings located in this temporal range match.")
-    else:
-        st.info(f"Awaiting historical data for country code '{country}'. Run at least two snapshot tasks across different dates for this country to begin historical analysis comparisons.")
