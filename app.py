@@ -1,3 +1,14 @@
+# -------------------------------------------------------------------------
+# GLOBAL WORKSPACE PATH INJECTION (Fixes Tool Import Failures on Cloud Staging)
+# -------------------------------------------------------------------------
+import sys
+import os
+
+root_dir = os.path.dirname(os.path.abspath(__file__))
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
+# -------------------------------------------------------------------------
+
 import streamlit as st
 import os
 from auth.utils import create_user, verify_user
