@@ -1,27 +1,22 @@
+# -------------------------------------------------------------------------
+# START OF ROBUST RUNTIME ENVIRONMENT PATH RESOLUTION
+# -------------------------------------------------------------------------
 import sys
 import os
-import importlib.util
 
-# -------------------------------------------------------------------------
-# DYNAMIC MODULE IMPORT LOGIC (Bypasses Streamlit exec() Path Isolation)
-# -------------------------------------------------------------------------
-root_dir = os.getcwd() # Points to /mount/src/crawl-x on Streamlit Cloud
+# Grab the directory of the current file (tools/) and go up one level to the project root
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, ".."))
 
-# 1. Dynamically import get_conn from analytics/db.py
-db_spec = importlib.util.spec_from_file_location("db_module", os.path.join(root_dir, "analytics", "db.py"))
-db_module = importlib.util.module_from_spec(db_spec)
-db_spec.loader.exec_module(db_module)
-get_conn = db_module.get_conn
-
-# 2. Dynamically import start_job from core/job_manager.py
-jm_spec = importlib.util.spec_from_file_location("jm_module", os.path.join(root_dir, "core", "job_manager.py"))
-jm_module = importlib.util.module_from_spec(jm_spec)
-jm_spec.loader.exec_module(jm_module)
-start_job = jm_module.start_job
+# Inject the project root at the very front of Python's search paths if it isn't there
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 # -------------------------------------------------------------------------
 
 import streamlit as st
 import pandas as pd
+
+# Standard imports will now resolve cleanly on both local Windows and Streamlit Cloud
 from analytics.db import get_conn
 from core.job_manager import start_job
 
@@ -31,7 +26,6 @@ INFO = {
     "icon": "📦",
     "description": "Monitor vanished or newly introduced product variants week-over-week across markets."
 }
-
 def get_tracked_dates(country):
     """Fetches all unique historical snapshot dates available for a specific market."""
     conn = get_conn()
