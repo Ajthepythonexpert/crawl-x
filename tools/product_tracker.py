@@ -2,19 +2,15 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import time
-import os
-import json
-import html
 from datetime import datetime
 from urllib.parse import urlparse
 
-# Scrapy Core Engine Imports
+# Scrapy High-Performance Core Imports
 import scrapy
 from scrapy.spiders import CrawlSpider, Rule
 from scrapy.linkextractors import LinkExtractor
-from scrapy.crawler import CrawlerRunner
-from billiard.process import Process  # Safe multiprocessing alternative for web servers
-from twisted.internet import reactor
+from scrapy.crawler import Crawler
+from scrapy.utils.project import get_project_settings
 import advertools as adv
 
 # 📦 METADATA DECLARATION FOR THE DASHBOARD REGISTRY LOOP
@@ -25,12 +21,12 @@ INFO = {
 }
 
 # -------------------------------------------------------------------------
-# 🕷️ YOUR EXACT WORKING SCRAPY SPIDER INTEGRATED NATIVELY
+# 🕷️ YOUR WORKING SCRAPY SPIDER (Optimized for Streamlit Memory Structuring)
 # -------------------------------------------------------------------------
 class BoschGrandMasterSplitAuditor(CrawlSpider):
     name = 'bosch_split_auditor'
 
-    def __init__(self, sitemap_url=None, sitemap_urls_list=None, sitemap_vibs=None, country="ZA", brand="BOSCH", *args, **kwargs):
+    def __init__(self, sitemap_url=None, sitemap_urls_list=None, sitemap_vibs=None, country="ZA", brand="BOSCH", results_accumulator=None, *args, **kwargs):
         super(BoschGrandMasterSplitAuditor, self).__init__(*args, **kwargs)
         self.sitemap_url = sitemap_url
         parsed = urlparse(sitemap_url)
@@ -39,8 +35,8 @@ class BoschGrandMasterSplitAuditor(CrawlSpider):
         self.brand = brand
         self.lang = "vi" if "/vi/" in sitemap_url else "en"
         self.allowed_domains = [self.domain]
+        self.results_accumulator = results_accumulator if results_accumulator is not None else []
         
-        # Start at the root language page
         self.start_urls = [f"{parsed.scheme}://{self.domain}/{self.lang}/"]
         if sitemap_urls_list:
             self.start_urls.extend(sitemap_urls_list)
@@ -49,8 +45,6 @@ class BoschGrandMasterSplitAuditor(CrawlSpider):
             Rule(LinkExtractor(allow=f"/{self.lang}/"), callback='parse_item', follow=True),
         )
         self._compile_rules()
-        
-        self.crawled_data = {}  
         self.sitemap_vibs = sitemap_vibs if sitemap_vibs else set()
 
     def parse_item(self, response):
@@ -58,68 +52,64 @@ class BoschGrandMasterSplitAuditor(CrawlSpider):
         if "/product/" in url or "/mkt-product/" in url:
             vib = url.rstrip('/').split('/')[-1].split('?')[0]
             
-            # Extract basic availability text to track stock baseline variations
             avail_text = response.xpath('//*[@data-testid="availability-text-with-link-text"]/text()').get()
             avail_text_copy = avail_text.strip() if avail_text else "In Stock"
             
-            self.crawled_data[vib] = {
-                'URL': url,
-                'Model Number': vib,
-                'Availability': avail_text_copy
-            }
+            # Record item instantly to reference arrays
+            self.results_accumulator.append({
+                "url": url,
+                "model_number": vib,
+                "availability": avail_text_copy
+            })
 
-    def closed(self, reason):
-        """Saves scraped inventory rows down to your shared database.db setup."""
-        today = datetime.now().strftime("%Y-%m-%d")
-        all_unique_vibs = set(self.crawled_data.keys()).union(self.sitemap_vibs)
-        
-        if not all_unique_vibs:
-            return
-
+# -------------------------------------------------------------------------
+# ⚙️ INLINE CRAWL EXECUTION WRAPPER (Cloud Environment Compliant)
+# -------------------------------------------------------------------------
+def run_inline_crawler(sitemap_url, country, brand, product_urls, sm_vibs):
+    """Executes the Scrapy spider asynchronously inside the primary engine thread context."""
+    scraped_items = []
+    
+    settings = get_project_settings()
+    settings.update({
+        'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'LOG_LEVEL': 'INFO',
+        'CONCURRENT_REQUESTS': 16,
+        'DOWNLOAD_DELAY': 0.1,
+        'COOKIES_ENABLED': False,
+        'TELNETCONSOLE_ENABLED': False
+    })
+    
+    # Initialize the Scrapy crawler engine instance directly
+    crawler = Crawler(BoschGrandMasterSplitAuditor, settings)
+    
+    # Instantiate your custom parameters directly into the compilation engine
+    spider = BoschGrandMasterSplitAuditor(
+        sitemap_url=sitemap_url,
+        sitemap_urls_list=product_urls,
+        sitemap_vibs=sm_vibs,
+        country=country,
+        brand=brand,
+        results_accumulator=scraped_items
+    )
+    
+    # Run the internal crawling pipeline loop synchronously inside this scope block
+    crawler.crawl(spider)
+    
+    # Write the results down into your central database framework directly
+    today = datetime.now().strftime("%Y-%m-%d")
+    if scraped_items:
         conn = sqlite3.connect("database.db")
         conn.execute("PRAGMA journal_mode=WAL;")
         cur = conn.cursor()
-        
-        for vib in all_unique_vibs:
-            data = self.crawled_data.get(vib, {})
-            url = data.get('URL', f"https://{self.domain}/{self.lang}/product/{vib}")
-            
+        for item in scraped_items:
             cur.execute("""
                 INSERT INTO product_snapshots (url, model_number, brand, country, status_code, snapshot_date, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (url, vib, self.brand, self.country, 200, today, time.time()))
-            
+            """, (item["url"], item["model_number"], brand, country, 200, today, time.time()))
         conn.commit()
         conn.close()
-
-# -------------------------------------------------------------------------
-# ⚙️ MULTIPROCESSING RUNNER CONTEXT (Prevents Twisted Reactor Framework Collision)
-# -------------------------------------------------------------------------
-def run_spider_process(sitemap_url, country, brand, product_urls, sm_vibs):
-    """Safely initializes the Scrapy engine in an isolated process block."""
-    def crawler_thread():
-        runner = CrawlerRunner(settings={
-            'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'LOG_LEVEL': 'INFO',
-            'RETRY_TIMES': 3,
-            'DOWNLOAD_TIMEOUT': 20,
-            'CONCURRENT_REQUESTS': 16,
-            'REDIRECT_ENABLED': True,
-            'HTTPERROR_ALLOW_ALL': True,
-            'DOWNLOAD_DELAY': 0.1
-        })
-        d = runner.crawl(BoschGrandMasterSplitAuditor, 
-                         sitemap_url=sitemap_url, 
-                         sitemap_urls_list=product_urls, 
-                         sitemap_vibs=sm_vibs,
-                         country=country,
-                         brand=brand)
-        d.addBoth(lambda _: reactor.stop())
-        reactor.run()
-
-    p = Process(target=crawler_thread)
-    p.start()
-    p.join()  # Blocks control wrapper cleanly until Scrapy completes execution
+        
+    return scraped_items
 
 # -------------------------------------------------------------------------
 # 🖥️ STREAMLIT FRONTEND USER INTERFACE LAYER
@@ -153,11 +143,11 @@ def render():
                     product_urls = []
                     sm_vibs = set()
                 
-                st.write(f"Step 2: Spawning multi-threaded scraper process to spider domain links...")
-                run_spider_process(sitemap_url, country, brand, product_urls, sm_vibs)
+                st.write(f"Step 2: Commencing safe async link discovery crawler on core system domain...")
+                payload = run_inline_crawler(sitemap_url, country, brand, product_urls, sm_vibs)
                 
                 status.update(label="✅ Inventory Run Finalized successfully!", state="complete")
-                st.success("Database logs updated! Refreshing view matrices...")
+                st.success(f"Successfully tracked and evaluated live pages! Refreshing data arrays...")
                 time.sleep(1)
                 st.rerun()
 
