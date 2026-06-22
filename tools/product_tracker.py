@@ -1,9 +1,31 @@
+# -------------------------------------------------------------------------
+# CONTEXT MANAGER CHDIR RESOLUTION (Forces Module Resolution on Cloud)
+# -------------------------------------------------------------------------
+import os
+import sys
+
+# Track where Streamlit thinks it is running right now
+_original_pwd = os.getcwd()
+
+# Jump straight to the absolute project root folder
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.chdir(_project_root)
+
+# Force the root into sys.path explicitly for this thread context execution
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+try:
+    # Now standard python imports are forced to find your root folders
+    from analytics.db import get_conn
+    from core.job_manager import start_job
+finally:
+    # Safely restore original working directory context so navigation doesn't snap
+    os.chdir(_original_pwd)
+# -------------------------------------------------------------------------
+
 import streamlit as st
 import pandas as pd
-
-# Clean, standard imports (Now globally resolved by app.py)
-from analytics.db import get_conn
-from core.job_manager import start_job
 
 # 📦 METADATA DECLARATION FOR THE DASHBOARD REGISTRY LOOP
 INFO = {
