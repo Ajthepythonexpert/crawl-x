@@ -261,3 +261,55 @@ import json
 with open("{output_path}", "w") as f:
     json.dump(results, f, indent=2)
 """
+# -------------------------------------------------------------------------
+# START OF PRODUCT TRACKER MODULE
+# This module generates a standalone script to extract and log BSH product inventory.
+# -------------------------------------------------------------------------
+def build_product_tracker_script(sitemap_url, country, brand, out_json):
+    import json
+    sitemap_url = json.dumps(sitemap_url)
+    out_json = out_json.replace("\\", "/")
+    
+    return f"""
+import advertools as adv
+import sqlite3
+import json
+import time
+from datetime import datetime
+
+results = []
+today = datetime.now().strftime("%Y-%m-%d")
+
+try:
+    df = adv.sitemap_to_df({sitemap_url})
+    if 'loc' in df.columns:
+        all_urls = df['loc'].dropna().unique().tolist()
+        
+        # Isolate targeted structural BSH product storefront paths
+        product_urls = [u for u in all_urls if "/product/" in u.lower() or "/mkt-product/" in u.lower()]
+        
+        conn = sqlite3.connect("database.db")
+        cur = conn.cursor()
+        
+        for url in product_urls:
+            # Drop trailing slashes and extract target model parameter values
+            model_num = url.rstrip('/').split('/')[-1]
+            
+            cur.execute(\"\"\"
+                INSERT INTO product_snapshots (url, model_number, brand, country, status_code, snapshot_date, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            \"\"\", (url, model_num, "{brand}", "{country}", 200, today, time.time()))
+            
+            results.append({{"url": url, "model": model_num}})
+            
+        conn.commit()
+        conn.close()
+except Exception as e:
+    print(f"Error executing trace processing run: {{e}}")
+
+with open("{out_json}", "w") as f:
+    json.dump({{"status": "completed", "count": len(results)}}, f)
+"""
+# -------------------------------------------------------------------------
+# END OF PRODUCT TRACKER MODULE SECTION
+# -------------------------------------------------------------------------
