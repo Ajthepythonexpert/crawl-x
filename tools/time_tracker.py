@@ -4,7 +4,7 @@ from datetime import datetime
 
 # --- Configuration & Setup ---
 st.set_page_config(page_title="Team Time Tracker", page_icon="⏱️", layout="wide")
-DEFAULT_NAMES = ["Alice", "Bob", "Charlie", "David", "Eve"]
+DEFAULT_NAMES = ["Arjun", "Jawahar", "Nupur", "Rashmi", "Rahul"]
 
 # --- Password Protection Check ---
 def check_password():
@@ -40,7 +40,8 @@ def check_password():
 if check_password():
 
     # --- Database Connection ---
-    conn = st.connection("time_tracker_db", type="sql", url="sqlite:///work_logs.db")
+    # CRITICAL FIX: Removed url="sqlite:///..." to force it to use Secrets!
+    conn = st.connection("time_tracker_db", type="sql")
 
     def init_db():
         """Creates the database table if it doesn't exist."""
@@ -164,9 +165,9 @@ if check_password():
                             st.success("Log saved successfully!")
                             st.rerun()
                 
-                if st.button("Cancel & Discard Log"):
-                    st.session_state.pending_log = None
-                    st.rerun()
+            if st.button("Cancel & Discard Log"):
+                st.session_state.pending_log = None
+                st.rerun()
         else:
             st.warning("Please select or enter your name to begin.")
 
