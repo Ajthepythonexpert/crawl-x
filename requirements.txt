@@ -13,3 +13,4 @@ PyMuPDF
 pillow
 aiohttp>=3.10.0
 SQLAlchemy
+psycopg2-binary
