@@ -199,6 +199,29 @@ if check_password():
             if filtered_df.empty:
                 st.warning("No data for the selected users.")
             else:
+                # --- NEW SUMMARY TABLE ---
+                st.markdown("### 👥 Total Hours per Person")
+                # Group by Name and sum the hours, then sort from highest to lowest
+                person_summary = filtered_df.groupby("Name")["Duration (Hours)"].sum().reset_index()
+                person_summary = person_summary.sort_values(by="Duration (Hours)", ascending=False)
+                
+                # Display it beautifully using Streamlit column config
+                st.dataframe(
+                    person_summary,
+                    column_config={
+                        "Name": "Team Member",
+                        "Duration (Hours)": st.column_config.NumberColumn(
+                            "Total Hours",
+                            format="%.2f ⏱️"
+                        )
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                st.divider() # Adds a nice visual line break
+
+                # --- EXISTING CHARTS & LOGS ---
                 if view_type == "Weekly":
                     agg_column = 'Week'
                 else:
@@ -207,10 +230,10 @@ if check_password():
                 summary = filtered_df.groupby([agg_column, 'Name'])['Duration (Hours)'].sum().reset_index()
                 chart_data = summary.pivot(index=agg_column, columns='Name', values='Duration (Hours)').fillna(0)
                 
-                st.markdown(f"### Total Hours ({view_type})")
+                st.markdown(f"### 📊 Chart ({view_type})")
                 st.bar_chart(chart_data)
                 
-                st.markdown("### Detailed Logs")
+                st.markdown("### 📋 Detailed Logs")
                 display_df = filtered_df.drop(columns=['Week', 'Month']).sort_values(by="Date", ascending=False)
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
                 
