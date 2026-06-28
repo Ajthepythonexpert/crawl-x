@@ -8,33 +8,39 @@ DEFAULT_NAMES = ["Arjun", "Jawahar", "Nupur", "Rashmi", "Rahul"]
 
 # --- Password Protection Check ---
 def check_password():
-    """Returns True if the user entered the correct password."""
-    # Check if the secret code is configured in Streamlit Secrets
     if "general" in st.secrets and "tool_secret_code" in st.secrets["general"]:
         expected_password = st.secrets["general"]["tool_secret_code"]
     else:
-        st.error("🔑 Security configuration missing. Please add 'tool_secret_code' to secrets.")
+        st.error("🔑 Security configuration missing.")
         return False
 
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
+    # Unique session state name to prevent conflict with other tools
+    if "time_tracker_auth" not in st.session_state:
+        st.session_state.time_tracker_auth = False
 
-    if st.session_state.authenticated:
+    if st.session_state.time_tracker_auth:
         return True
 
-    # Show password entry form
     st.subheader("🔐 Restricted Access Tool")
     user_code = st.text_input("Enter the secret access code:", type="password")
     
     if st.button("Unlock Tool", type="primary"):
         if user_code == expected_password:
-            st.session_state.authenticated = True
-            st.success("Access Granted!")
+            st.session_state.time_tracker_auth = True
             st.rerun()
         else:
-            st.error("❌ Invalid secret code. Access denied.")
+            st.error("❌ Invalid code.")
             
     return False
+
+# FORCE THE STOP
+if not check_password():
+    st.stop() 
+
+# --- Everything else goes here, unindented ---
+# Now, because of st.stop(), the code below only runs if authenticated!
+conn = st.connection("time_tracker_db", type="sql")
+# ... rest of your app ...
 
 # Stop execution right here if password check fails
 if check_password():
